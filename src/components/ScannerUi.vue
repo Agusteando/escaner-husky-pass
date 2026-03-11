@@ -1,5 +1,9 @@
 <template>
-  <div class="flex-1 flex flex-col">
+  <div class="flex-1 flex flex-col relative">
+    <div class="absolute top-2 right-2 text-[10px] text-gray-400/80 font-mono z-30 pointer-events-none select-none">
+      {{ shortCommitHash }}
+    </div>
+
     <div v-show="isScanning" class="w-full flex">
       <button v-for="(door, i) in doors" :key="i"
               @click="selectDoor(i)"
@@ -100,6 +104,17 @@ const doors = [
     { label: 'Puerta 4', value: 4 }
 ];
 
+const shortCommitHash = computed(() => {
+    const configuredHash =
+        import.meta.env.VITE_COMMIT_HASH ||
+        import.meta.env.VITE_GIT_COMMIT ||
+        (typeof __APP_COMMIT_HASH__ !== 'undefined' ? __APP_COMMIT_HASH__ : '') ||
+        globalThis?.__APP_COMMIT_HASH__ ||
+        'dev-local';
+
+    return String(configuredHash).trim().slice(0, 10);
+});
+
 const headerText = computed(() => {
     if (scanType.value === 'entrada') return 'ENTRADA';
     if (scanType.value === 'salida') return 'SALIDA';
@@ -112,6 +127,8 @@ const processedMatriculas = new Set();
 let conRetardos = [];
 let deudorCheckController = null;
 const processingLabel = ref('');
+let restartIntervalId = null;
+let isStartInFlight = false;
 
 const getConfiguredSettingsPassword = () => {
     const candidates = [
@@ -177,13 +194,39 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+    if (restartIntervalId) {
+        clearInterval(restartIntervalId);
+        restartIntervalId = null;
+    }
     if (scannerInstance) scannerInstance.destroy();
 });
+
+const startScannerWithRetry = async (maxAttempts = 5) => {
+    if (!scannerInstance || isStartInFlight) return;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            isStartInFlight = true;
+            await scannerInstance.start();
+            isStartInFlight = false;
+            return;
+        } catch (e) {
+            isStartInFlight = false;
+            if (attempt === maxAttempts) throw e;
+            await new Promise(resolve => setTimeout(resolve, 350));
+        }
+    }
+};
 
 const startScanner = async (type) => {
     scanType.value = type;
     isScanning.value = true;
     noSleep.enable();
+
+    if (restartIntervalId) {
+        clearInterval(restartIntervalId);
+        restartIntervalId = null;
+    }
 
     if (!scannerInstance) {
         scannerInstance = new QrScanner(videoEl.value, result => handleScan(result), {
@@ -194,7 +237,7 @@ const startScanner = async (type) => {
     }
 
     try {
-        await scannerInstance.start();
+        await startScannerWithRetry();
     } catch (e) {
         console.error('Camera error', e);
         Swal.fire('Error', 'No se pudo acceder a la cámara.', 'error');
@@ -204,18 +247,35 @@ const startScanner = async (type) => {
 
 const stopScanner = () => {
     isScanning.value = false;
+    if (restartIntervalId) {
+        clearInterval(restartIntervalId);
+        restartIntervalId = null;
+    }
     if (scannerInstance) scannerInstance.stop();
     noSleep.disable();
     processingLabel.value = '';
 };
 
 const restartScannerWhenNoSwal = () => {
-    const checkConditions = setInterval(() => {
-        if (!Swal.isVisible() && isScanning.value && scannerInstance) {
-            scannerInstance.start().catch(console.error);
-            clearInterval(checkConditions);
+    if (restartIntervalId) return;
+
+    restartIntervalId = setInterval(async () => {
+        if (!isScanning.value || !scannerInstance) {
+            clearInterval(restartIntervalId);
+            restartIntervalId = null;
+            return;
         }
-    }, 300);
+
+        if (Swal.isVisible()) return;
+
+        try {
+            await startScannerWithRetry(3);
+            clearInterval(restartIntervalId);
+            restartIntervalId = null;
+        } catch (e) {
+            console.warn('Scanner restart retry failed, will keep retrying...', e);
+        }
+    }, 1000);
 };
 
 let inThrottle = false;
@@ -422,7 +482,7 @@ const showSuccessFlow = async (studentInfo) => {
                 <small>${gradoA} ${grupoA}</small>
               </div>
               <p style="margin-top:8px;margin-bottom:4px;">Persona autorizada:<br><strong>${fullnameP}</strong></p>
-              <small>(${parentesco})</small>
+              <small>({{parentesco}})</small>
               <div style="display:flex;justify-content:center;gap:12px;margin-top:12px;">
                 <img src="${fotoA || 'https://via.placeholder.com/150?text=No+Image'}" alt="${fullnameA}" style="width:120px;height:120px;object-fit:cover;border-radius:4px;">
                 <img src="${fotoP || 'https://via.placeholder.com/150?text=No+Image'}" alt="${fullnameP}" style="width:120px;height:120px;object-fit:cover;border-radius:4px;">
