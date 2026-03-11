@@ -2,14 +2,6 @@
   "templates": {
     "default": "**{fullnameP}** {grado} {grupo} {puertaEmoji}🚪 {puertaText}"
   },
-  "delivery": {
-    "telegram": {
-      "mode": "immediate",
-      "timeBased": {
-        "threshold": "15:30"
-      }
-    }
-  },
   "rules": [
     { "id": 1, "plantel": "PR, PM", "nivel": "general", "grado": "general", "chatId": "-1002953362976", "template": "🏫 Multi-Plantel **{plantel}**: **{fullnameP}** {grado} {grupo} {puertaEmoji}" },
     { "id": 2, "plantel": "PR", "nivel": "general", "grado": "primero", "chatId": "-1002964061705" },

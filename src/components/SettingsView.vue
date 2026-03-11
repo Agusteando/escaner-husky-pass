@@ -33,77 +33,6 @@
           <textarea v-model="localConfig.templates.default" ref="defaultTemplateInput" class="w-full p-3 border rounded-lg focus:ring-2 focus:ring-husky-blue outline-none resize-none text-sm font-medium" rows="3"></textarea>
         </section>
 
-        <!-- Telegram Delivery Section -->
-        <section>
-          <div class="mb-3 border-b pb-2">
-            <h3 class="font-display text-lg text-husky-gray">Entrega de Telegram</h3>
-            <p class="text-xs text-gray-500 mt-1">
-              Controla cuándo se envían los mensajes dirigidos a Telegram. Los destinos de WhatsApp no cambian.
-            </p>
-          </div>
-
-          <div class="bg-gray-50 p-4 rounded-xl border shadow-sm space-y-4">
-            <div>
-              <label class="block text-xs font-bold text-gray-500 mb-2">Modo de envío</label>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <button
-                  v-for="option in telegramModeOptions"
-                  :key="option.value"
-                  type="button"
-                  @click="setTelegramMode(option.value)"
-                  :class="[
-                    'text-left rounded-xl border p-4 transition shadow-sm',
-                    localConfig.delivery.telegram.mode === option.value
-                      ? 'border-husky-blue bg-blue-50 ring-2 ring-blue-100'
-                      : 'border-gray-200 bg-white hover:border-husky-blue'
-                  ]"
-                >
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="font-display text-sm text-husky-gray">{{ option.label }}</span>
-                    <i
-                      :class="[
-                        'fas fa-check-circle',
-                        localConfig.delivery.telegram.mode === option.value ? 'text-husky-blue' : 'text-gray-300'
-                      ]"
-                    ></i>
-                  </div>
-                  <p class="text-xs text-gray-500 mt-2 leading-relaxed">{{ option.description }}</p>
-                </button>
-              </div>
-              <p class="text-xs text-gray-500 mt-2">
-                “Inmediato” conserva el comportamiento actual. “Basado en hora” solo permite Telegram a partir de la hora definida.
-              </p>
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,220px)_1fr] gap-4 items-start">
-              <div>
-                <label for="telegram-threshold" class="block text-xs font-bold text-gray-500 mb-1">
-                  Hora mínima de envío
-                </label>
-                <input
-                  id="telegram-threshold"
-                  v-model="localConfig.delivery.telegram.timeBased.threshold"
-                  type="time"
-                  step="60"
-                  :disabled="!isTelegramTimeBased"
-                  class="w-full border p-2 rounded bg-white outline-none focus:border-husky-blue disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
-                />
-              </div>
-
-              <div class="text-xs text-gray-500 leading-relaxed">
-                <p>Usa formato de 24 horas. Ejemplo: <strong>15:30</strong>.</p>
-                <p class="mt-1">La comparación usa la hora local del dispositivo, igual que el resto de validaciones horarias de la app.</p>
-                <p class="mt-1">Zona horaria detectada: <strong>{{ deviceTimeZoneLabel }}</strong>.</p>
-                <p class="mt-1">Si el modo “Basado en hora” está activo y el escaneo sucede antes de la hora indicada, Telegram no se envía en ese evento.</p>
-              </div>
-            </div>
-
-            <p v-if="telegramThresholdError" class="text-xs text-red-600 font-semibold">
-              {{ telegramThresholdError }}
-            </p>
-          </div>
-        </section>
-
         <!-- Rules Mapping Section -->
         <section>
           <div class="flex justify-between items-center mb-3 border-b pb-2">
@@ -131,11 +60,13 @@
                   <input v-model="rule.grado" placeholder="general, primero..." class="w-full border p-2 rounded bg-white outline-none focus:border-husky-blue" />
                 </div>
               </div>
+
               <div class="mb-3">
                 <label class="block text-xs font-bold text-gray-500 mb-1">Chat ID (WhatsApp / Telegram)</label>
                 <input v-model="rule.chatId" placeholder="-100... o 1234@g.us" class="w-full border p-2 rounded bg-white outline-none focus:border-husky-blue text-sm font-mono" />
               </div>
-              <div>
+
+              <div class="mb-4">
                 <label class="block text-xs font-bold text-gray-500 mb-1">Plantilla Personalizada (Opcional, deja vacío para usar la global)</label>
                 <textarea v-model="rule.template" :ref="(el) => templateRefs[index] = el" class="w-full p-2 border rounded bg-white outline-none focus:border-husky-blue text-sm font-medium resize-none" rows="2" placeholder="Plantilla individual para este grupo..."></textarea>
                 <div class="text-right mt-1">
@@ -143,6 +74,89 @@
                   <span class="text-xs text-husky-purple font-mono cursor-pointer hover:underline mr-2" @click="insertVar('{fullnameP}', index)">+{fullnameP}</span>
                   <span class="text-xs text-husky-purple font-mono cursor-pointer hover:underline" @click="insertVar('{puertaEmoji}', index)">+{puertaEmoji}</span>
                 </div>
+              </div>
+
+              <div class="rounded-xl border bg-white p-4">
+                <div class="mb-3">
+                  <h4 class="font-display text-sm text-husky-gray">Envío Telegram para esta regla</h4>
+                  <p class="text-xs text-gray-500 mt-1">
+                    Este ajuste se aplica únicamente si el Chat ID corresponde a Telegram. En WhatsApp, el envío sigue siendo inmediato.
+                  </p>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                  <button
+                    type="button"
+                    @click="setRuleTelegramMode(rule, TELEGRAM_DELIVERY_MODES.IMMEDIATE)"
+                    :class="[
+                      'text-left rounded-xl border p-3 transition shadow-sm',
+                      rule.telegramDelivery.mode === TELEGRAM_DELIVERY_MODES.IMMEDIATE
+                        ? 'border-husky-blue bg-blue-50 ring-2 ring-blue-100'
+                        : 'border-gray-200 bg-white hover:border-husky-blue'
+                    ]"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="font-display text-sm text-husky-gray">Inmediato</span>
+                      <i
+                        :class="[
+                          'fas fa-check-circle',
+                          rule.telegramDelivery.mode === TELEGRAM_DELIVERY_MODES.IMMEDIATE ? 'text-husky-blue' : 'text-gray-300'
+                        ]"
+                      ></i>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2">
+                      Mantiene el comportamiento actual para este grupo.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    @click="setRuleTelegramMode(rule, TELEGRAM_DELIVERY_MODES.TIME_BASED)"
+                    :class="[
+                      'text-left rounded-xl border p-3 transition shadow-sm',
+                      rule.telegramDelivery.mode === TELEGRAM_DELIVERY_MODES.TIME_BASED
+                        ? 'border-husky-blue bg-blue-50 ring-2 ring-blue-100'
+                        : 'border-gray-200 bg-white hover:border-husky-blue'
+                    ]"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="font-display text-sm text-husky-gray">Basado en hora</span>
+                      <i
+                        :class="[
+                          'fas fa-check-circle',
+                          rule.telegramDelivery.mode === TELEGRAM_DELIVERY_MODES.TIME_BASED ? 'text-husky-blue' : 'text-gray-300'
+                        ]"
+                      ></i>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2">
+                      Solo envía Telegram cuando el escaneo ocurre a partir de la hora indicada.
+                    </p>
+                  </button>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-4 items-start">
+                  <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">Hora mínima</label>
+                    <input
+                      v-model="rule.telegramDelivery.timeBased.threshold"
+                      type="time"
+                      step="60"
+                      :disabled="rule.telegramDelivery.mode !== TELEGRAM_DELIVERY_MODES.TIME_BASED"
+                      class="w-full border p-2 rounded bg-white outline-none focus:border-husky-blue disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+                    />
+                  </div>
+
+                  <div class="text-xs text-gray-500 leading-relaxed">
+                    <p>Formato de 24 horas. Ejemplo: <strong>15:30</strong>.</p>
+                    <p class="mt-1">La comparación usa la hora local del dispositivo, igual que el resto de la app.</p>
+                    <p class="mt-1">Zona horaria detectada: <strong>{{ deviceTimeZoneLabel }}</strong>.</p>
+                    <p class="mt-1">Si el evento ocurre antes del umbral, Telegram no se envía para esta regla.</p>
+                  </div>
+                </div>
+
+                <p v-if="getRuleTelegramThresholdError(rule)" class="text-xs text-red-600 font-semibold mt-2">
+                  {{ getRuleTelegramThresholdError(rule) }}
+                </p>
               </div>
             </div>
           </div>
@@ -159,12 +173,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { ref, onMounted } from 'vue';
 import Swal from 'sweetalert2';
 import {
     appConfig,
     DEFAULT_TELEGRAM_THRESHOLD,
     TELEGRAM_DELIVERY_MODES,
+    createDefaultTelegramDeliveryConfig,
     isValidTimeThreshold,
     normalizeConfig,
     saveConfig,
@@ -173,60 +188,53 @@ import {
 import { getDeviceTimeZoneLabel } from '../services/deliveryRules';
 
 const emit = defineEmits(['close']);
-
 const localConfig = ref(normalizeConfig(appConfig));
 const defaultTemplateInput = ref(null);
 const templateRefs = ref({});
 const deviceTimeZoneLabel = getDeviceTimeZoneLabel();
 
-const telegramModeOptions = [
-    {
-        value: TELEGRAM_DELIVERY_MODES.IMMEDIATE,
-        label: 'Inmediato',
-        description: 'Envía Telegram en el momento del escaneo. Mantiene el comportamiento actual.'
-    },
-    {
-        value: TELEGRAM_DELIVERY_MODES.TIME_BASED,
-        label: 'Basado en hora',
-        description: 'Solo envía Telegram cuando el escaneo ocurre a la hora configurada o después.'
-    }
-];
-
-const isTelegramTimeBased = computed(() => {
-    return localConfig.value.delivery.telegram.mode === TELEGRAM_DELIVERY_MODES.TIME_BASED;
-});
-
-const telegramThresholdError = computed(() => {
-    if (!isTelegramTimeBased.value) return '';
-    return isValidTimeThreshold(localConfig.value.delivery.telegram.timeBased.threshold)
-        ? ''
-        : 'Ingresa una hora válida en formato HH:MM de 24 horas.';
-});
-
 onMounted(() => {
     localConfig.value = normalizeConfig(appConfig);
 });
 
-watch(
-    () => localConfig.value.delivery.telegram.mode,
-    (mode) => {
-        if (
-            mode === TELEGRAM_DELIVERY_MODES.TIME_BASED &&
-            !localConfig.value.delivery.telegram.timeBased.threshold
-        ) {
-            localConfig.value.delivery.telegram.timeBased.threshold = DEFAULT_TELEGRAM_THRESHOLD;
-        }
+const ensureRuleTelegramDelivery = (rule) => {
+    if (!rule.telegramDelivery) {
+        rule.telegramDelivery = createDefaultTelegramDeliveryConfig();
     }
-);
 
-const setTelegramMode = (mode) => {
-    localConfig.value.delivery.telegram.mode = mode;
+    if (!rule.telegramDelivery.timeBased) {
+        rule.telegramDelivery.timeBased = {
+            threshold: DEFAULT_TELEGRAM_THRESHOLD
+        };
+    }
+
+    if (!rule.telegramDelivery.timeBased.threshold) {
+        rule.telegramDelivery.timeBased.threshold = DEFAULT_TELEGRAM_THRESHOLD;
+    }
+};
+
+const setRuleTelegramMode = (rule, mode) => {
+    ensureRuleTelegramDelivery(rule);
+    rule.telegramDelivery.mode = mode;
+
     if (
         mode === TELEGRAM_DELIVERY_MODES.TIME_BASED &&
-        !localConfig.value.delivery.telegram.timeBased.threshold
+        !rule.telegramDelivery.timeBased.threshold
     ) {
-        localConfig.value.delivery.telegram.timeBased.threshold = DEFAULT_TELEGRAM_THRESHOLD;
+        rule.telegramDelivery.timeBased.threshold = DEFAULT_TELEGRAM_THRESHOLD;
     }
+};
+
+const getRuleTelegramThresholdError = (rule) => {
+    ensureRuleTelegramDelivery(rule);
+
+    if (rule.telegramDelivery.mode !== TELEGRAM_DELIVERY_MODES.TIME_BASED) {
+        return '';
+    }
+
+    return isValidTimeThreshold(rule.telegramDelivery.timeBased.threshold)
+        ? ''
+        : 'Ingresa una hora válida en formato HH:MM de 24 horas.';
 };
 
 const insertVar = (variable, ruleIndex) => {
@@ -245,8 +253,8 @@ const insertVar = (variable, ruleIndex) => {
         if (!input) return;
 
         const currentVal = localConfig.value.rules[ruleIndex].template || '';
-        const startPos = input.selectionStart ?? currentVal.length;
-        const endPos = input.selectionEnd ?? currentVal.length;
+        const startPos = input.selectionStart || currentVal.length;
+        const endPos = input.selectionEnd || currentVal.length;
 
         localConfig.value.rules[ruleIndex].template =
             currentVal.substring(0, startPos) +
@@ -262,7 +270,8 @@ const addRule = () => {
         nivel: 'general',
         grado: 'general',
         chatId: '',
-        template: ''
+        template: '',
+        telegramDelivery: createDefaultTelegramDeliveryConfig()
     });
 };
 
@@ -310,7 +319,7 @@ const exportConfig = () => {
 };
 
 const importConfig = (event) => {
-    const file = event.target.files?.[0];
+    const file = event.target.files[0];
     if (!file) return;
 
     const reader = new FileReader();
@@ -350,7 +359,6 @@ const importConfig = (event) => {
 .slide-in {
     animation: slideIn 0.3s ease-out forwards;
 }
-
 @keyframes slideIn {
     from { transform: translateX(100%); }
     to { transform: translateX(0); }

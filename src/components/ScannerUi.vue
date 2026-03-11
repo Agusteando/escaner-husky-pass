@@ -88,7 +88,7 @@ import {
     sendWhatsAppMessage, sendTelegramMessage
 } from '../services/api';
 import { getMatchedRules, appConfig } from '../services/configManager';
-import { evaluateTelegramDelivery } from '../services/deliveryRules';
+import { evaluateTelegramRuleDelivery } from '../services/deliveryRules';
 
 const emit = defineEmits(['openSettings']);
 
@@ -404,8 +404,7 @@ const sendMessage = (fullnameA, fullnameP, grado, grupo, plantel, nivel, puerta)
     const matchedRules = getMatchedRules(plantel, nivel, grado);
     if (matchedRules.length === 0) return;
 
-    const telegramDelivery = evaluateTelegramDelivery({ date: new Date(), config: appConfig });
-
+    const scanDate = new Date();
     const emojiNumbers = { 0: '', 1: '1️⃣', 2: '2️⃣', 3: '3️⃣', 4: '4️⃣' };
     const puertaText = puerta === 3 ? ' POR CARRUSEL' : (puerta === 4 ? ' PEATONAL' : '');
 
@@ -424,26 +423,31 @@ const sendMessage = (fullnameA, fullnameP, grado, grupo, plantel, nivel, puerta)
             .replace(/{puertaEmoji}/g, emojiNumbers[puerta] || '')
             .replace(/{puertaText}/g, puertaText);
 
-        uniquePayloads.set(rule.chatId, msg);
+        uniquePayloads.set(String(rule.chatId), {
+            message: msg,
+            rule
+        });
     });
 
-    uniquePayloads.forEach((msg, chatId) => {
+    uniquePayloads.forEach(({ message, rule }, chatId) => {
         const normalizedChatId = String(chatId ?? '').trim();
         if (!normalizedChatId) return;
 
-        const payload = { chatId: [normalizedChatId], message: msg };
+        const payload = { chatId: [normalizedChatId], message };
 
         if (/@g\.us$/i.test(normalizedChatId)) {
             sendWhatsAppMessage(payload).catch(console.error);
             return;
         }
 
-        if (!telegramDelivery.shouldSend) {
-            console.info('Telegram delivery deferred by configuration.', {
+        const telegramDecision = evaluateTelegramRuleDelivery(rule, scanDate);
+
+        if (!telegramDecision.shouldSend) {
+            console.info('Telegram delivery skipped for this rule because threshold was not met.', {
                 chatId: normalizedChatId,
-                threshold: telegramDelivery.threshold,
-                timezone: telegramDelivery.timezone,
-                reason: telegramDelivery.reason
+                threshold: telegramDecision.threshold,
+                timezone: telegramDecision.timezone,
+                reason: telegramDecision.reason
             });
             return;
         }

@@ -2,6 +2,7 @@ import { reactive } from 'vue';
 
 const STATE_KEY = 'husky_pass_settings';
 const DEFAULT_TEMPLATE = '**{fullnameP}** {grado} {grupo} {puertaEmoji}🚪 {puertaText}';
+export const DEFAULT_TELEGRAM_THRESHOLD = '15:30';
 
 export const TELEGRAM_DELIVERY_MODES = Object.freeze({
     IMMEDIATE: 'immediate',
@@ -12,29 +13,24 @@ export const VALID_TELEGRAM_DELIVERY_MODES = Object.freeze(
     Object.values(TELEGRAM_DELIVERY_MODES)
 );
 
-export const DEFAULT_TELEGRAM_THRESHOLD = '15:30';
+export const isValidTimeThreshold = (value) => {
+    if (typeof value !== 'string') return false;
+    return /^([01]\d|2[0-3]):([0-5]\d)$/.test(value.trim());
+};
+
+export const createDefaultTelegramDeliveryConfig = () => ({
+    mode: TELEGRAM_DELIVERY_MODES.IMMEDIATE,
+    timeBased: {
+        threshold: DEFAULT_TELEGRAM_THRESHOLD
+    }
+});
 
 const createDefaultConfig = () => ({
     rules: [],
     templates: {
         default: DEFAULT_TEMPLATE
-    },
-    delivery: {
-        telegram: {
-            mode: TELEGRAM_DELIVERY_MODES.IMMEDIATE,
-            timeBased: {
-                threshold: DEFAULT_TELEGRAM_THRESHOLD
-            }
-        }
     }
 });
-
-export const appConfig = reactive(createDefaultConfig());
-
-export const isValidTimeThreshold = (value) => {
-    if (typeof value !== 'string') return false;
-    return /^([01]\d|2[0-3]):([0-5]\d)$/.test(value.trim());
-};
 
 const normalizeTemplates = (templates = {}) => ({
     default:
@@ -43,13 +39,17 @@ const normalizeTemplates = (templates = {}) => ({
             : DEFAULT_TEMPLATE
 });
 
-const normalizeTelegramDelivery = (telegram = {}) => {
-    const mode = VALID_TELEGRAM_DELIVERY_MODES.includes(telegram?.mode)
-        ? telegram.mode
+const normalizeTelegramDelivery = (deliveryConfig = {}, fallbackConfig = null) => {
+    const source = deliveryConfig && typeof deliveryConfig === 'object'
+        ? deliveryConfig
+        : (fallbackConfig && typeof fallbackConfig === 'object' ? fallbackConfig : {});
+
+    const mode = VALID_TELEGRAM_DELIVERY_MODES.includes(source?.mode)
+        ? source.mode
         : TELEGRAM_DELIVERY_MODES.IMMEDIATE;
 
-    const threshold = isValidTimeThreshold(telegram?.timeBased?.threshold)
-        ? telegram.timeBased.threshold.trim()
+    const threshold = isValidTimeThreshold(source?.timeBased?.threshold)
+        ? source.timeBased.threshold.trim()
         : DEFAULT_TELEGRAM_THRESHOLD;
 
     return {
@@ -60,35 +60,77 @@ const normalizeTelegramDelivery = (telegram = {}) => {
     };
 };
 
-export const normalizeConfig = (config = {}) => ({
-    rules: Array.isArray(config?.rules)
-        ? config.rules.map(rule => ({ ...rule }))
-        : [],
-    templates: normalizeTemplates(config?.templates),
-    delivery: {
-        telegram: normalizeTelegramDelivery(config?.delivery?.telegram)
+const normalizeRule = (rule = {}, legacyGlobalTelegramConfig = null) => {
+    const telegramDeliverySource =
+        rule?.telegramDelivery ??
+        rule?.delivery?.telegram ??
+        legacyGlobalTelegramConfig;
+
+    return {
+        ...rule,
+        plantel: typeof rule?.plantel === 'string' ? rule.plantel : '',
+        nivel: typeof rule?.nivel === 'string' && rule.nivel.trim() !== '' ? rule.nivel : 'general',
+        grado: typeof rule?.grado === 'string' && rule.grado.trim() !== '' ? rule.grado : 'general',
+        chatId: typeof rule?.chatId === 'string' ? rule.chatId : '',
+        template: typeof rule?.template === 'string' ? rule.template : '',
+        telegramDelivery: normalizeTelegramDelivery(telegramDeliverySource)
+    };
+};
+
+export const normalizeConfig = (config = {}) => {
+    const legacyGlobalTelegramConfig = config?.delivery?.telegram ?? null;
+
+    return {
+        rules: Array.isArray(config?.rules)
+            ? config.rules.map(rule => normalizeRule(rule, legacyGlobalTelegramConfig))
+            : [],
+        templates: normalizeTemplates(config?.templates)
+    };
+};
+
+export const appConfig = reactive(normalizeConfig(createDefaultConfig()));
+
+const validateSingleTelegramDelivery = (telegramDelivery, label) => {
+    const errors = [];
+
+    if (
+        telegramDelivery?.mode != null &&
+        !VALID_TELEGRAM_DELIVERY_MODES.includes(telegramDelivery.mode)
+    ) {
+        errors.push(`${label}: el modo de envío de Telegram no es válido.`);
+        return errors;
     }
-});
+
+    const mode = telegramDelivery?.mode ?? TELEGRAM_DELIVERY_MODES.IMMEDIATE;
+    const threshold = telegramDelivery?.timeBased?.threshold;
+
+    if (mode === TELEGRAM_DELIVERY_MODES.TIME_BASED && !isValidTimeThreshold(threshold)) {
+        errors.push(`${label}: la hora mínima de Telegram debe tener formato HH:MM en 24 horas.`);
+    }
+
+    return errors;
+};
 
 export const validateConfig = (config = {}) => {
     const errors = [];
     const normalizedConfig = normalizeConfig(config);
 
-    const rawMode = config?.delivery?.telegram?.mode;
-    if (rawMode != null && !VALID_TELEGRAM_DELIVERY_MODES.includes(rawMode)) {
-        errors.push('El modo de envío de Telegram no es válido.');
-    }
+    const rawRules = Array.isArray(config?.rules) ? config.rules : [];
+    const legacyGlobalTelegramConfig = config?.delivery?.telegram ?? null;
 
-    const effectiveMode = normalizedConfig.delivery.telegram.mode;
-    const rawThreshold = config?.delivery?.telegram?.timeBased?.threshold;
+    rawRules.forEach((rawRule, index) => {
+        const telegramDeliverySource =
+            rawRule?.telegramDelivery ??
+            rawRule?.delivery?.telegram ??
+            legacyGlobalTelegramConfig;
 
-    if (effectiveMode === TELEGRAM_DELIVERY_MODES.TIME_BASED) {
-        const thresholdToValidate = rawThreshold ?? normalizedConfig.delivery.telegram.timeBased.threshold;
-
-        if (!isValidTimeThreshold(thresholdToValidate)) {
-            errors.push('La hora mínima de envío de Telegram debe tener formato HH:MM en 24 horas.');
-        }
-    }
+        errors.push(
+            ...validateSingleTelegramDelivery(
+                telegramDeliverySource,
+                `Regla ${index + 1}`
+            )
+        );
+    });
 
     return {
         valid: errors.length === 0,
@@ -112,7 +154,6 @@ export const loadConfig = async () => {
 
     try {
         const response = await fetch('/config.json', { cache: 'no-store' });
-
         if (response.ok) {
             const data = await response.json();
             saveConfig(data);

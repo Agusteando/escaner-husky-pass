@@ -1,5 +1,4 @@
 import {
-    appConfig,
     DEFAULT_TELEGRAM_THRESHOLD,
     TELEGRAM_DELIVERY_MODES,
     isValidTimeThreshold
@@ -29,15 +28,16 @@ export const getLocalMinutesSinceMidnight = (date = new Date()) => {
     return (safeDate.getHours() * 60) + safeDate.getMinutes();
 };
 
-export const evaluateTelegramDelivery = ({ date = new Date(), config = appConfig } = {}) => {
+export const evaluateTelegramRuleDelivery = (rule, date = new Date()) => {
     const safeDate = getSafeDate(date);
+    const telegramDelivery = rule?.telegramDelivery ?? {};
 
-    const mode = config?.delivery?.telegram?.mode === TELEGRAM_DELIVERY_MODES.TIME_BASED
+    const mode = telegramDelivery?.mode === TELEGRAM_DELIVERY_MODES.TIME_BASED
         ? TELEGRAM_DELIVERY_MODES.TIME_BASED
         : TELEGRAM_DELIVERY_MODES.IMMEDIATE;
 
-    const threshold = isValidTimeThreshold(config?.delivery?.telegram?.timeBased?.threshold)
-        ? config.delivery.telegram.timeBased.threshold.trim()
+    const threshold = isValidTimeThreshold(telegramDelivery?.timeBased?.threshold)
+        ? telegramDelivery.timeBased.threshold.trim()
         : DEFAULT_TELEGRAM_THRESHOLD;
 
     const thresholdMinutes =
