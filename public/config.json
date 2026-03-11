@@ -1,0 +1,39 @@
+{
+  "templates": {
+    "default": "**{fullnameP}** {grado} {grupo} {puertaEmoji}🚪 {puertaText}"
+  },
+  "rules": [
+    { "id": 1, "plantel": "PR, PM", "nivel": "general", "grado": "general", "chatId": "-1002953362976", "template": "🏫 Multi-Plantel **{plantel}**: **{fullnameP}** {grado} {grupo} {puertaEmoji}" },
+    { "id": 2, "plantel": "PR", "nivel": "general", "grado": "primero", "chatId": "-1002964061705" },
+    { "id": 3, "plantel": "PR", "nivel": "general", "grado": "segundo", "chatId": "-1002914471106" },
+    { "id": 4, "plantel": "PR", "nivel": "general", "grado": "tercero", "chatId": "-1002842517594" },
+    { "id": 5, "plantel": "DM", "nivel": "general", "grado": "general", "chatId": "-1002953362976" },
+    { "id": 6, "plantel": "DM", "nivel": "general", "grado": "primero", "chatId": "-1002964061705" },
+    { "id": 7, "plantel": "DM", "nivel": "general", "grado": "segundo", "chatId": "-1002914471106" },
+    { "id": 8, "plantel": "DM", "nivel": "general", "grado": "tercero", "chatId": "-1002842517594" },
+    { "id": 9, "plantel": "CM", "nivel": "general", "grado": "general", "chatId": "-1002953362976" },
+    { "id": 10, "plantel": "CM", "nivel": "general", "grado": "primero", "chatId": "-1002964061705" },
+    { "id": 11, "plantel": "CM", "nivel": "general", "grado": "segundo", "chatId": "-1002914471106" },
+    { "id": 12, "plantel": "CM", "nivel": "general", "grado": "tercero", "chatId": "-1002842517594" },
+    { "id": 13, "plantel": "PM", "nivel": "general", "grado": "general", "chatId": "-4812362451" },
+    { "id": 14, "plantel": "PM", "nivel": "general", "grado": "primero", "chatId": "-4978364932" },
+    { "id": 15, "plantel": "PM", "nivel": "general", "grado": "segundo", "chatId": "-4860950457" },
+    { "id": 16, "plantel": "PM", "nivel": "general", "grado": "tercero", "chatId": "-4677977665" },
+    { "id": 17, "plantel": "PM", "nivel": "general", "grado": "cuarto", "chatId": "-4884156170" },
+    { "id": 18, "plantel": "PM", "nivel": "general", "grado": "quinto", "chatId": "-4723391530" },
+    { "id": 19, "plantel": "PM", "nivel": "general", "grado": "sexto", "chatId": "-4886831315" },
+    { "id": 20, "plantel": "PT", "nivel": "primaria", "grado": "general", "chatId": "-1002778141022" },
+    { "id": 21, "plantel": "PT", "nivel": "primaria", "grado": "primero", "chatId": "-1002871559182" },
+    { "id": 22, "plantel": "PT", "nivel": "primaria", "grado": "segundo", "chatId": "-1003096482760" },
+    { "id": 23, "plantel": "PT", "nivel": "primaria", "grado": "tercero", "chatId": "-1002864402548" },
+    { "id": 24, "plantel": "PT", "nivel": "primaria", "grado": "cuarto", "chatId": "-1002683313560" },
+    { "id": 25, "plantel": "PT", "nivel": "primaria", "grado": "quinto", "chatId": "-1002949136769" },
+    { "id": 26, "plantel": "PT", "nivel": "primaria", "grado": "sexto", "chatId": "-4910675726" },
+    { "id": 27, "plantel": "PT", "nivel": "secundaria", "grado": "general", "chatId": "-1002963110859" },
+    { "id": 28, "plantel": "ST", "nivel": "general", "grado": "general", "chatId": "-1002963110859" },
+    { "id": 29, "plantel": "SM", "nivel": "general", "grado": "primero", "chatId": "-1003007208500" },
+    { "id": 30, "plantel": "SM", "nivel": "general", "grado": "segundo", "chatId": "-1003098443427" },
+    { "id": 31, "plantel": "SM", "nivel": "general", "grado": "tercero", "chatId": "-1002695585527" },
+    { "id": 32, "plantel": "CT", "nivel": "general", "grado": "general", "chatId": "-1003058130813", "template": "👋 Plantel **{plantel}**: **{fullnameA}** de {grado} acaba de escanear. {puertaEmoji}" }
+  ]
+}
