@@ -1,7 +1,8 @@
 import { reactive } from 'vue';
 
 const STATE_KEY = 'husky_pass_settings';
-const DEFAULT_TEMPLATE = '**{fullnameP}** {grado} {grupo} {puertaEmoji}🚪 {puertaText}';
+// FIX: Use {fullnameA} (student name) to match script_2.js which sends the student name in messages
+const DEFAULT_TEMPLATE = '**{fullnameA}** {grado} {grupo} {puertaEmoji}🚪{puertaText}';
 export const DEFAULT_TELEGRAM_THRESHOLD = '15:30';
 
 export const TELEGRAM_DELIVERY_MODES = Object.freeze({

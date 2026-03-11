@@ -1,9 +1,9 @@
 {
   "templates": {
-    "default": "**{fullnameP}** {grado} {grupo} {puertaEmoji}🚪 {puertaText}"
+    "default": "**{fullnameA}** {grado} {grupo} {puertaEmoji}🚪{puertaText}"
   },
   "rules": [
-    { "id": 1, "plantel": "PR, PM", "nivel": "general", "grado": "general", "chatId": "-1002953362976", "template": "🏫 Multi-Plantel **{plantel}**: **{fullnameP}** {grado} {grupo} {puertaEmoji}" },
+    { "id": 1, "plantel": "PR, PM", "nivel": "general", "grado": "general", "chatId": "-1002953362976", "template": "🏫 Multi-Plantel **{plantel}**: **{fullnameA}** {grado} {grupo} {puertaEmoji}" },
     { "id": 2, "plantel": "PR", "nivel": "general", "grado": "primero", "chatId": "-1002964061705" },
     { "id": 3, "plantel": "PR", "nivel": "general", "grado": "segundo", "chatId": "-1002914471106" },
     { "id": 4, "plantel": "PR", "nivel": "general", "grado": "tercero", "chatId": "-1002842517594" },

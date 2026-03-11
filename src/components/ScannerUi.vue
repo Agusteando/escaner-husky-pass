@@ -240,11 +240,22 @@ const handleScan = (result) => {
 
     scannerInstance.pause();
 
-    if (!id || route === 'husky' || baseURL !== 'admin.casitaiedis.edu.mx') {
+    // FIX: Two separate error messages matching script_2.js behavior
+    if (!id) {
         Swal.fire({
             icon: 'error',
             title: 'Escaneo inválido',
-            text: 'Este QR no es válido o no pertenece a este sistema.'
+            html: 'El QR no coincide con algún registro vigente. Si se trata de un error, asegúrate de que no haya reflejos, sombras u obstrucciones que puedan afectar la precisión del escaneo.',
+            position: 'top'
+        }).then(restartScannerWhenNoSwal);
+        return;
+    }
+
+    if (route === 'husky' || baseURL !== 'admin.casitaiedis.edu.mx') {
+        Swal.fire({
+            icon: 'error',
+            title: 'Error',
+            text: 'Este QR no debe escanearse con este escáner'
         }).then(restartScannerWhenNoSwal);
         return;
     }
@@ -296,7 +307,10 @@ const processSingleId = async (id) => {
 const handleStudentDataDisplay = async (data) => {
     const { matricula, nivelEduA, gradoA, grupoA, plantel } = data[0];
 
-    if (processedMatriculas.has(matricula)) return;
+    if (processedMatriculas.has(matricula)) {
+        restartScannerWhenNoSwal();
+        return;
+    }
     processedMatriculas.add(matricula);
 
     if (scanType.value === 'entrada') {
@@ -370,26 +384,29 @@ const showSuccessFlow = async (studentInfo) => {
     const colors = { 'preescolar': '#E94B4D', 'primaria': '#FDC53D', 'secundaria': '#5AA6DC', 'preparatoria': '#514F9D' };
     const color = colors[nivelEduA.toLowerCase()] || '#8EC152';
 
+    // Use inline styles — Tailwind class names injected into JS strings are purged
+    // at build time and never land in the compiled CSS, so images would render invisible.
     await Swal.fire({
         icon: 'success',
         title: 'Escaneo exitoso',
         html: `
-            <div class="flex flex-col items-center justify-center">
-              <div class="px-6 py-1 rounded-full text-white font-bold mb-3 uppercase shadow-md" style="background-color: ${color};">
-                ${nivelEduA}
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
+              <div style="background-color:${color};border-radius:999px;padding:4px 20px;margin-bottom:12px;display:inline-flex;align-items:center;">
+                <span style="color:#fff;font-weight:bold;text-transform:uppercase;">${nivelEduA}</span>
               </div>
-              <div class="bg-husky-gray text-white w-full rounded-lg py-2 mb-3">
-                <p class="m-0 font-display text-lg">${fullnameA}</p>
+              <div style="background:#585858;color:#fff;width:100%;border-radius:6px;padding:8px 12px;margin-bottom:12px;text-align:center;">
+                <p style="margin:0;font-size:1rem;font-weight:bold;">${fullnameA}</p>
                 <small>${gradoA} ${grupoA}</small>
               </div>
-              <p class="mb-1">Autorizado: <strong>${fullnameP}</strong> <small>(${parentesco})</small></p>
-              <div class="flex justify-center gap-4 mt-2">
-                <img src="${fotoA || 'https://via.placeholder.com/150'}" class="w-24 h-24 rounded-full object-cover border border-gray-200">
-                <img src="${fotoP || 'https://via.placeholder.com/150'}" class="w-24 h-24 rounded-full object-cover border border-gray-200">
+              <p style="margin-top:8px;margin-bottom:4px;">Persona autorizada:<br><strong>${fullnameP}</strong></p>
+              <small>(${parentesco})</small>
+              <div style="display:flex;justify-content:center;gap:12px;margin-top:12px;">
+                <img src="${fotoA || 'https://via.placeholder.com/150?text=No+Image'}" alt="${fullnameA}" style="width:120px;height:120px;object-fit:cover;border-radius:4px;">
+                <img src="${fotoP || 'https://via.placeholder.com/150?text=No+Image'}" alt="${fullnameP}" style="width:120px;height:120px;object-fit:cover;border-radius:4px;">
               </div>
             </div>
         `,
-        confirmButtonText: '<i class="fas fa-sync"></i> OK',
+        confirmButtonText: '<i class="fas fa-sync"></i> Nuevo Escaneo',
         confirmButtonColor: '#3085D6',
         customClass: 'my-swal'
     });
@@ -406,7 +423,8 @@ const sendMessage = (fullnameA, fullnameP, grado, grupo, plantel, nivel, puerta)
 
     const scanDate = new Date();
     const emojiNumbers = { 0: '', 1: '1️⃣', 2: '2️⃣', 3: '3️⃣', 4: '4️⃣' };
-    const puertaText = puerta === 3 ? ' POR CARRUSEL' : (puerta === 4 ? ' PEATONAL' : '');
+    // FIX: Match script_2.js bold markdown formatting for special door labels
+    const puertaText = puerta === 3 ? ' **POR CARRUSEL**' : (puerta === 4 ? ' **PEATONAL**' : '');
 
     const uniquePayloads = new Map();
 
