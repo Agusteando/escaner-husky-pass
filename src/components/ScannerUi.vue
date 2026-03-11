@@ -1,6 +1,5 @@
 <template>
   <div class="flex-1 flex flex-col">
-    <!-- Door Selection (Hidden until scanning) -->
     <div v-show="isScanning" class="w-full flex">
       <button v-for="(door, i) in doors" :key="i"
               @click="selectDoor(i)"
@@ -9,12 +8,10 @@
       </button>
     </div>
 
-    <!-- Video Header -->
     <div v-show="isScanning" class="bg-husky-gray text-white text-center py-4 font-bold tracking-wider font-display text-lg">
       {{ headerText }}
     </div>
 
-    <!-- Main View (Buttons when not scanning) -->
     <div v-show="!isScanning" class="flex-1 flex flex-col items-center justify-center p-6 space-y-8">
       <div class="text-center mb-8">
         <img src="/IECS-IEDIS.png" alt="IECS-IEDIS" class="h-28 mx-auto mb-4 drop-shadow-md">
@@ -39,7 +36,6 @@
       </button>
     </div>
 
-    <!-- Video Container -->
     <div v-show="isScanning" class="relative w-full aspect-[3/4] bg-black overflow-hidden flex-1">
       <video ref="videoEl" class="absolute inset-0 w-full h-full object-cover"></video>
       <div class="absolute inset-0 pointer-events-none z-10 flex flex-col">
@@ -53,13 +49,11 @@
         </div>
         <div class="h-[15%] bg-black/40 w-full"></div>
       </div>
-      <!-- Processing Label Overlay -->
       <div v-if="processingLabel" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black/80 text-white px-4 py-2 rounded-lg font-bold z-20 transition-all duration-300">
         {{ processingLabel }}
       </div>
     </div>
 
-    <!-- Controls while scanning -->
     <div v-show="isScanning" class="bg-white p-4 space-y-3 pb-8 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
       <div class="flex gap-3 max-w-md mx-auto">
         <button @click="stopScanner" class="flex-1 bg-gray-500 text-white py-3 rounded-lg font-display shadow hover:bg-gray-600 transition flex items-center justify-center gap-2">
@@ -88,7 +82,6 @@ import {
     sendWhatsAppMessage, sendTelegramMessage
 } from '../services/api';
 import { getMatchedRules, appConfig } from '../services/configManager';
-import { evaluateTelegramRuleDelivery } from '../services/deliveryRules';
 
 const emit = defineEmits(['openSettings']);
 
@@ -113,9 +106,9 @@ const headerText = computed(() => {
     return 'EVENTO';
 });
 
-let scanQueue = new Set();
-let processedIds = new Set();
-let processedMatriculas = new Set();
+const scanQueue = new Set();
+const processedIds = new Set();
+const processedMatriculas = new Set();
 let conRetardos = [];
 let deudorCheckController = null;
 const processingLabel = ref('');
@@ -176,9 +169,11 @@ const selectDoor = (index) => {
 onMounted(() => {
     const cookies = document.cookie.split('; ');
     const puertaCookie = cookies.find(c => c.startsWith('puerta='));
-    if (puertaCookie) selectedDoor.value = parseInt(puertaCookie.split('=')[1]) || 0;
+    if (puertaCookie) selectedDoor.value = parseInt(puertaCookie.split('=')[1], 10) || 0;
 
-    fetchTardosData().then(data => conRetardos = data).catch(console.error);
+    fetchTardosData().then(data => {
+        conRetardos = data;
+    }).catch(console.error);
 });
 
 onUnmounted(() => {
@@ -193,7 +188,7 @@ const startScanner = async (type) => {
     if (!scannerInstance) {
         scannerInstance = new QrScanner(videoEl.value, result => handleScan(result), {
             preferredCamera: 'environment',
-            highlightCodeOutline: false,
+            highlightCodeOutline: true,
             maxScansPerSecond: 2
         });
     }
@@ -211,36 +206,38 @@ const stopScanner = () => {
     isScanning.value = false;
     if (scannerInstance) scannerInstance.stop();
     noSleep.disable();
+    processingLabel.value = '';
 };
 
 const restartScannerWhenNoSwal = () => {
     const checkConditions = setInterval(() => {
-        if (!Swal.isVisible() && isScanning.value) {
-            scannerInstance.start();
+        if (!Swal.isVisible() && isScanning.value && scannerInstance) {
+            scannerInstance.start().catch(console.error);
             clearInterval(checkConditions);
         }
-    }, 1000);
+    }, 300);
 };
 
 let inThrottle = false;
 const handleScan = (result) => {
     if (inThrottle) return;
     inThrottle = true;
-    setTimeout(() => inThrottle = false, 2000);
+    setTimeout(() => {
+        inThrottle = false;
+    }, 2000);
 
     const [, , baseURL, route, id = ''] = result.data.split('/');
 
     if (processedIds.has(id)) {
-        showLabel(navigator.onLine ? '¡Listo!' : 'Sin conectividad');
+        showLabel(navigator.onLine ? '¡Listo!' : 'Sin conectividad, acercate al Router');
         return;
     }
 
     if (navigator.onLine) processedIds.add(id);
-    else showLabel('Sin conectividad');
+    else showLabel('Sin conectividad, acercate al Router');
 
     scannerInstance.pause();
 
-    // FIX: Two separate error messages matching script_2.js behavior
     if (!id) {
         Swal.fire({
             icon: 'error',
@@ -264,11 +261,15 @@ const handleScan = (result) => {
         scanQueue.add(id);
         processScanQueue();
     }
+
+    restartScannerWhenNoSwal();
 };
 
 const showLabel = (text) => {
     processingLabel.value = text;
-    setTimeout(() => processingLabel.value = '', 2000);
+    setTimeout(() => {
+        processingLabel.value = '';
+    }, 2000);
 };
 
 const processScanQueue = async () => {
@@ -285,21 +286,26 @@ const processSingleId = async (id) => {
         const studentData = await fetchStudentDetails(id);
         if (!studentData || !studentData[0]) throw new Error('Data no válida');
 
-        const ack = await fallbackInsertScan({ data: [{ ss_id: id, type: scanType.value, puerta: selectedDoor.value }], table: 'acceso' });
+        void handleStudentDataDisplay(studentData);
 
-        if (ack.id == '0') {
-            Swal.fire({ icon: 'warning', toast: true, title: 'Ya se escaneó', timer: 2000, position: 'top-end', showConfirmButton: false });
-            restartScannerWhenNoSwal();
-            return;
-        }
-
-        await handleStudentDataDisplay(studentData);
+        void fallbackInsertScan({
+            data: [{ ss_id: id, type: scanType.value, puerta: selectedDoor.value }],
+            table: 'acceso'
+        }).then(ack => {
+            if (String(ack?.id) === '0') {
+                showLabel('¡Listo!');
+            }
+        }).catch(console.error);
     } catch (e) {
         if (e.message === 'Código QR inválido') {
-            Swal.fire({ icon: 'error', title: 'Anulado', text: 'El QR fue anulado. Reimprimir.' }).then(restartScannerWhenNoSwal);
+            Swal.fire({
+                icon: 'error',
+                title: 'Esta persona autorizada fue anulada - Reimprimir',
+                text: 'Su QR fue anulado, hay que volverlo a generar desde la plataforma e imprimirlo nuevamente.'
+            }).then(restartScannerWhenNoSwal);
         } else {
             console.error(e);
-            setTimeout(restartScannerWhenNoSwal, 2000);
+            setTimeout(restartScannerWhenNoSwal, 1000);
         }
     }
 };
@@ -308,19 +314,19 @@ const handleStudentDataDisplay = async (data) => {
     const { matricula, nivelEduA, gradoA, grupoA, plantel } = data[0];
 
     if (processedMatriculas.has(matricula)) {
-        restartScannerWhenNoSwal();
         return;
     }
     processedMatriculas.add(matricula);
 
     if (scanType.value === 'entrada') {
-        checkDeudorAndToast(matricula);
+        void checkDeudorAndToast(matricula);
     }
 
     const studentWithTardy = conRetardos.find(s => s.matricula === matricula);
     const now = new Date();
-    const isPrimaria = nivelEduA.toLowerCase() === 'primaria' && (now.getHours() > 8 || (now.getHours() === 8 && now.getMinutes() >= 0));
-    const isSecundaria = nivelEduA.toLowerCase() === 'secundaria' && now.getHours() >= 7;
+    const level = String(nivelEduA || '').toLowerCase();
+    const isPrimaria = level === 'primaria' && (now.getHours() > 8 || (now.getHours() === 8 && now.getMinutes() >= 0));
+    const isSecundaria = level === 'secundaria' && now.getHours() >= 7;
 
     if ((isPrimaria || isSecundaria) && studentWithTardy && scanType.value === 'entrada') {
         await handleRetardosFlow(studentWithTardy, nivelEduA, gradoA, grupoA, matricula, plantel);
@@ -330,25 +336,37 @@ const handleStudentDataDisplay = async (data) => {
 };
 
 const checkDeudorAndToast = async (matricula) => {
+    if (scanType.value !== 'entrada') return;
     if (deudorCheckController) deudorCheckController.abort();
     deudorCheckController = new AbortController();
+
     try {
         const isDeudor = await checkDeudor(matricula, deudorCheckController.signal);
         if (isDeudor && !Swal.isVisible()) {
             Swal.fire({
-                toast: true, position: 'top-end', icon: 'warning',
-                title: 'Pasar a administración', showConfirmButton: false, timer: 2200,
-                customClass: { popup: 'deudor-toast' }, backdrop: false
+                toast: true,
+                position: 'top-end',
+                icon: 'warning',
+                title: 'Pasar a administración',
+                showConfirmButton: false,
+                timer: 2200,
+                timerProgressBar: true,
+                backdrop: false
             });
         }
-    } catch (e) {}
+    } catch (e) {
+        if (e?.name !== 'AbortError') console.warn(e);
+    }
 };
 
 const handleRetardosFlow = async (studentWithTardy, nivelEduA, gradoA, grupoA, matricula, plantel) => {
     const res = await Swal.fire({
         title: `El alumno ${studentWithTardy.student_fullname} tiene ${studentWithTardy.TardyCount} retardos.`,
-        showCancelButton: true, confirmButtonText: 'Ver retardos', cancelButtonText: 'Cancelar'
+        showCancelButton: true,
+        confirmButtonText: 'Ver retardos',
+        cancelButtonText: 'Cancelar'
     });
+
     if (!res.isConfirmed) {
         restartScannerWhenNoSwal();
         return;
@@ -357,17 +375,23 @@ const handleRetardosFlow = async (studentWithTardy, nivelEduA, gradoA, grupoA, m
     try {
         const details = await fetchDetailsByMatricula(matricula);
         const ids = details.map(d => d.id);
-        let tableHtml = `<table class="w-full border mt-2"><thead><tr class="bg-gray-100"><th>Fecha</th><th>Hora</th></tr></thead><tbody>`;
-        details.forEach(d => tableHtml += `<tr><td class="border p-2">${new Date(d.date).toLocaleDateString()}</td><td class="border p-2">${d.time}</td></tr>`);
-        tableHtml += `</tbody></table>`;
+
+        let tableHtml = '<table class="w-full border mt-2"><thead><tr class="bg-gray-100"><th>Fecha</th><th>Hora</th></tr></thead><tbody>';
+        details.forEach(d => {
+            tableHtml += `<tr><td class="border p-2">${new Date(d.date).toLocaleDateString()}</td><td class="border p-2">${d.time}</td></tr>`;
+        });
+        tableHtml += '</tbody></table>';
 
         const suspendRes = await Swal.fire({
-            title: 'Detalles de Retardos', html: tableHtml, showCancelButton: true, confirmButtonText: 'Suspender',
+            title: 'Detalles de Retardos',
+            html: tableHtml,
+            showCancelButton: true,
+            confirmButtonText: 'Suspender'
         });
 
         if (suspendRes.isConfirmed) {
             await applySuspension(ids, matricula);
-            sendEmail({
+            void sendEmail({
                 to: `dir.${nivelEduA.toLowerCase().substring(0, 3)}.${plantel.toLowerCase()}@casitaiedis.edu.mx`,
                 subject: `Suspensión por Retardos - ${studentWithTardy.student_fullname}`,
                 message: `El alumno acumuló ${studentWithTardy.TardyCount} retardos.<br>${tableHtml}`
@@ -376,17 +400,16 @@ const handleRetardosFlow = async (studentWithTardy, nivelEduA, gradoA, grupoA, m
     } catch (e) {
         Swal.fire('Error', 'No se pudieron obtener detalles', 'error');
     }
+
     restartScannerWhenNoSwal();
 };
 
 const showSuccessFlow = async (studentInfo) => {
     const { fullnameP, fotoP, fullnameA, nivelEduA, gradoA, grupoA, fotoA, parentesco, plantel } = studentInfo;
-    const colors = { 'preescolar': '#E94B4D', 'primaria': '#FDC53D', 'secundaria': '#5AA6DC', 'preparatoria': '#514F9D' };
-    const color = colors[nivelEduA.toLowerCase()] || '#8EC152';
+    const colors = { preescolar: '#E94B4D', primaria: '#FDC53D', secundaria: '#5AA6DC', preparatoria: '#514F9D' };
+    const color = colors[String(nivelEduA || '').toLowerCase()] || '#8EC152';
 
-    // Use inline styles — Tailwind class names injected into JS strings are purged
-    // at build time and never land in the compiled CSS, so images would render invisible.
-    await Swal.fire({
+    void Swal.fire({
         icon: 'success',
         title: 'Escaneo exitoso',
         html: `
@@ -406,24 +429,24 @@ const showSuccessFlow = async (studentInfo) => {
               </div>
             </div>
         `,
-        confirmButtonText: '<i class="fas fa-sync"></i> Nuevo Escaneo',
-        confirmButtonColor: '#3085D6',
+        showConfirmButton: false,
+        timer: 1600,
+        timerProgressBar: true,
         customClass: 'my-swal'
+    }).then(() => {
+        restartScannerWhenNoSwal();
     });
 
     if (scanType.value !== 'entrada') {
-        sendMessage(fullnameA, fullnameP, gradoA, grupoA, plantel, nivelEduA, selectedDoor.value);
+        void sendMessage(fullnameA, fullnameP, gradoA, grupoA, plantel, nivelEduA, selectedDoor.value);
     }
-    restartScannerWhenNoSwal();
 };
 
-const sendMessage = (fullnameA, fullnameP, grado, grupo, plantel, nivel, puerta) => {
+const sendMessage = async (fullnameA, fullnameP, grado, grupo, plantel, nivel, puerta) => {
     const matchedRules = getMatchedRules(plantel, nivel, grado);
     if (matchedRules.length === 0) return;
 
-    const scanDate = new Date();
     const emojiNumbers = { 0: '', 1: '1️⃣', 2: '2️⃣', 3: '3️⃣', 4: '4️⃣' };
-    // FIX: Match script_2.js bold markdown formatting for special door labels
     const puertaText = puerta === 3 ? ' **POR CARRUSEL**' : (puerta === 4 ? ' **PEATONAL**' : '');
 
     const uniquePayloads = new Map();
@@ -441,44 +464,31 @@ const sendMessage = (fullnameA, fullnameP, grado, grupo, plantel, nivel, puerta)
             .replace(/{puertaEmoji}/g, emojiNumbers[puerta] || '')
             .replace(/{puertaText}/g, puertaText);
 
-        uniquePayloads.set(String(rule.chatId), {
-            message: msg,
-            rule
-        });
+        uniquePayloads.set(String(rule.chatId), { message: msg });
     });
 
-    uniquePayloads.forEach(({ message, rule }, chatId) => {
+    uniquePayloads.forEach(({ message }, chatId) => {
         const normalizedChatId = String(chatId ?? '').trim();
         if (!normalizedChatId) return;
 
         const payload = { chatId: [normalizedChatId], message };
-
         if (/@g\.us$/i.test(normalizedChatId)) {
-            sendWhatsAppMessage(payload).catch(console.error);
-            return;
+            void sendWhatsAppMessage(payload).catch(console.error);
+        } else {
+            void sendTelegramMessage(payload).catch(console.error);
         }
-
-        const telegramDecision = evaluateTelegramRuleDelivery(rule, scanDate);
-
-        if (!telegramDecision.shouldSend) {
-            console.info('Telegram delivery skipped for this rule because threshold was not met.', {
-                chatId: normalizedChatId,
-                threshold: telegramDecision.threshold,
-                timezone: telegramDecision.timezone,
-                reason: telegramDecision.reason
-            });
-            return;
-        }
-
-        sendTelegramMessage(payload).catch(console.error);
     });
 };
 
 const promptMatricula = async () => {
-    scannerInstance.pause();
+    if (scannerInstance) scannerInstance.pause();
+
     const { value: matricula } = await Swal.fire({
-        title: 'Ingrese la matrícula', input: 'text', inputAttributes: { maxlength: 6 },
-        showCancelButton: true, confirmButtonText: 'Buscar'
+        title: 'Ingrese la matrícula',
+        input: 'text',
+        inputAttributes: { maxlength: 6 },
+        showCancelButton: true,
+        confirmButtonText: 'Buscar'
     });
 
     if (matricula && matricula.length === 6) {
@@ -492,16 +502,18 @@ const promptMatricula = async () => {
             `).join('');
 
             Swal.fire({
-                title: 'Seleccione Persona Autorizada', html: `<div class="grid grid-cols-2 gap-2">${htmlContent}</div>`, showConfirmButton: false,
+                title: 'Seleccione Persona Autorizada',
+                html: `<div class="grid grid-cols-2 gap-2">${htmlContent}</div>`,
+                showConfirmButton: false,
                 didRender: () => {
                     personas.forEach(p => {
-                        document.getElementById(`btn-manual-${p.persona_id}`).addEventListener('click', () => {
+                        document.getElementById(`btn-manual-${p.persona_id}`)?.addEventListener('click', () => {
                             Swal.close();
-                            processSingleId(p.persona_id);
+                            void processSingleId(p.persona_id);
                         });
                     });
                 }
-            });
+            }).then(restartScannerWhenNoSwal);
         } else {
             Swal.fire('Error', 'No se encontraron personas autorizadas.', 'error').then(restartScannerWhenNoSwal);
         }
