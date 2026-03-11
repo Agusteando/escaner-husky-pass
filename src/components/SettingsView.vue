@@ -21,7 +21,7 @@
         <!-- Message Template Section -->
         <section>
           <h3 class="font-display text-lg text-husky-gray mb-3 border-b pb-2">Plantilla Global por Defecto</h3>
-          <p class="text-xs text-gray-500 mb-2">Variables disponibles: <br/>
+          <p class="text-xs text-gray-500 mb-2">Variables disponibles: <br />
             <span class="text-husky-purple font-mono cursor-pointer hover:underline" @click="insertVar('{fullnameP}', null)">{fullnameP}</span>,
             <span class="text-husky-purple font-mono cursor-pointer hover:underline" @click="insertVar('{fullnameA}', null)">{fullnameA}</span>,
             <span class="text-husky-purple font-mono cursor-pointer hover:underline" @click="insertVar('{plantel}', null)">{plantel}</span>,
@@ -33,6 +33,77 @@
           <textarea v-model="localConfig.templates.default" ref="defaultTemplateInput" class="w-full p-3 border rounded-lg focus:ring-2 focus:ring-husky-blue outline-none resize-none text-sm font-medium" rows="3"></textarea>
         </section>
 
+        <!-- Telegram Delivery Section -->
+        <section>
+          <div class="mb-3 border-b pb-2">
+            <h3 class="font-display text-lg text-husky-gray">Entrega de Telegram</h3>
+            <p class="text-xs text-gray-500 mt-1">
+              Controla cuándo se envían los mensajes dirigidos a Telegram. Los destinos de WhatsApp no cambian.
+            </p>
+          </div>
+
+          <div class="bg-gray-50 p-4 rounded-xl border shadow-sm space-y-4">
+            <div>
+              <label class="block text-xs font-bold text-gray-500 mb-2">Modo de envío</label>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  v-for="option in telegramModeOptions"
+                  :key="option.value"
+                  type="button"
+                  @click="setTelegramMode(option.value)"
+                  :class="[
+                    'text-left rounded-xl border p-4 transition shadow-sm',
+                    localConfig.delivery.telegram.mode === option.value
+                      ? 'border-husky-blue bg-blue-50 ring-2 ring-blue-100'
+                      : 'border-gray-200 bg-white hover:border-husky-blue'
+                  ]"
+                >
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="font-display text-sm text-husky-gray">{{ option.label }}</span>
+                    <i
+                      :class="[
+                        'fas fa-check-circle',
+                        localConfig.delivery.telegram.mode === option.value ? 'text-husky-blue' : 'text-gray-300'
+                      ]"
+                    ></i>
+                  </div>
+                  <p class="text-xs text-gray-500 mt-2 leading-relaxed">{{ option.description }}</p>
+                </button>
+              </div>
+              <p class="text-xs text-gray-500 mt-2">
+                “Inmediato” conserva el comportamiento actual. “Basado en hora” solo permite Telegram a partir de la hora definida.
+              </p>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,220px)_1fr] gap-4 items-start">
+              <div>
+                <label for="telegram-threshold" class="block text-xs font-bold text-gray-500 mb-1">
+                  Hora mínima de envío
+                </label>
+                <input
+                  id="telegram-threshold"
+                  v-model="localConfig.delivery.telegram.timeBased.threshold"
+                  type="time"
+                  step="60"
+                  :disabled="!isTelegramTimeBased"
+                  class="w-full border p-2 rounded bg-white outline-none focus:border-husky-blue disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+                />
+              </div>
+
+              <div class="text-xs text-gray-500 leading-relaxed">
+                <p>Usa formato de 24 horas. Ejemplo: <strong>15:30</strong>.</p>
+                <p class="mt-1">La comparación usa la hora local del dispositivo, igual que el resto de validaciones horarias de la app.</p>
+                <p class="mt-1">Zona horaria detectada: <strong>{{ deviceTimeZoneLabel }}</strong>.</p>
+                <p class="mt-1">Si el modo “Basado en hora” está activo y el escaneo sucede antes de la hora indicada, Telegram no se envía en ese evento.</p>
+              </div>
+            </div>
+
+            <p v-if="telegramThresholdError" class="text-xs text-red-600 font-semibold">
+              {{ telegramThresholdError }}
+            </p>
+          </div>
+        </section>
+
         <!-- Rules Mapping Section -->
         <section>
           <div class="flex justify-between items-center mb-3 border-b pb-2">
@@ -41,11 +112,11 @@
               + Agregar
             </button>
           </div>
-          
+
           <div class="space-y-4">
             <div v-for="(rule, index) in localConfig.rules" :key="rule.id || index" class="bg-gray-50 p-4 rounded-xl border relative shadow-sm">
               <button @click="removeRule(index)" class="absolute top-2 right-2 text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button>
-              
+
               <div class="grid grid-cols-2 gap-3 mb-3 text-sm">
                 <div class="col-span-2">
                   <label class="block text-xs font-bold text-gray-500 mb-1">Plantel (Multi-plantel: PR, PM o * para todos)</label>
@@ -88,36 +159,96 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
-import { appConfig, saveConfig } from '../services/configManager';
+import { computed, onMounted, ref, watch } from 'vue';
 import Swal from 'sweetalert2';
+import {
+    appConfig,
+    DEFAULT_TELEGRAM_THRESHOLD,
+    TELEGRAM_DELIVERY_MODES,
+    isValidTimeThreshold,
+    normalizeConfig,
+    saveConfig,
+    validateConfig
+} from '../services/configManager';
+import { getDeviceTimeZoneLabel } from '../services/deliveryRules';
 
 const emit = defineEmits(['close']);
-const localConfig = ref({ rules: [], templates: { default: '' } });
+
+const localConfig = ref(normalizeConfig(appConfig));
 const defaultTemplateInput = ref(null);
 const templateRefs = ref({});
+const deviceTimeZoneLabel = getDeviceTimeZoneLabel();
+
+const telegramModeOptions = [
+    {
+        value: TELEGRAM_DELIVERY_MODES.IMMEDIATE,
+        label: 'Inmediato',
+        description: 'Envía Telegram en el momento del escaneo. Mantiene el comportamiento actual.'
+    },
+    {
+        value: TELEGRAM_DELIVERY_MODES.TIME_BASED,
+        label: 'Basado en hora',
+        description: 'Solo envía Telegram cuando el escaneo ocurre a la hora configurada o después.'
+    }
+];
+
+const isTelegramTimeBased = computed(() => {
+    return localConfig.value.delivery.telegram.mode === TELEGRAM_DELIVERY_MODES.TIME_BASED;
+});
+
+const telegramThresholdError = computed(() => {
+    if (!isTelegramTimeBased.value) return '';
+    return isValidTimeThreshold(localConfig.value.delivery.telegram.timeBased.threshold)
+        ? ''
+        : 'Ingresa una hora válida en formato HH:MM de 24 horas.';
+});
 
 onMounted(() => {
-    localConfig.value = JSON.parse(JSON.stringify(appConfig));
+    localConfig.value = normalizeConfig(appConfig);
 });
+
+watch(
+    () => localConfig.value.delivery.telegram.mode,
+    (mode) => {
+        if (
+            mode === TELEGRAM_DELIVERY_MODES.TIME_BASED &&
+            !localConfig.value.delivery.telegram.timeBased.threshold
+        ) {
+            localConfig.value.delivery.telegram.timeBased.threshold = DEFAULT_TELEGRAM_THRESHOLD;
+        }
+    }
+);
+
+const setTelegramMode = (mode) => {
+    localConfig.value.delivery.telegram.mode = mode;
+    if (
+        mode === TELEGRAM_DELIVERY_MODES.TIME_BASED &&
+        !localConfig.value.delivery.telegram.timeBased.threshold
+    ) {
+        localConfig.value.delivery.telegram.timeBased.threshold = DEFAULT_TELEGRAM_THRESHOLD;
+    }
+};
 
 const insertVar = (variable, ruleIndex) => {
     if (ruleIndex === null) {
         const input = defaultTemplateInput.value;
         if (!input) return;
+
         const startPos = input.selectionStart;
         const endPos = input.selectionEnd;
-        localConfig.value.templates.default = 
+        localConfig.value.templates.default =
             localConfig.value.templates.default.substring(0, startPos) +
             variable +
             localConfig.value.templates.default.substring(endPos);
     } else {
         const input = templateRefs.value[ruleIndex];
         if (!input) return;
-        const currentVal = localConfig.value.rules[ruleIndex].template || "";
-        const startPos = input.selectionStart || currentVal.length;
-        const endPos = input.selectionEnd || currentVal.length;
-        localConfig.value.rules[ruleIndex].template = 
+
+        const currentVal = localConfig.value.rules[ruleIndex].template || '';
+        const startPos = input.selectionStart ?? currentVal.length;
+        const endPos = input.selectionEnd ?? currentVal.length;
+
+        localConfig.value.rules[ruleIndex].template =
             currentVal.substring(0, startPos) +
             variable +
             currentVal.substring(endPos);
@@ -139,10 +270,25 @@ const removeRule = (index) => {
     localConfig.value.rules.splice(index, 1);
 };
 
+const buildValidationHtml = (errors) => {
+    return errors.map(error => `<div class="text-left">• ${error}</div>`).join('');
+};
+
 const saveChanges = () => {
-    appConfig.rules = localConfig.value.rules;
-    appConfig.templates = localConfig.value.templates;
-    saveConfig();
+    const { valid, errors, normalizedConfig } = validateConfig(localConfig.value);
+
+    if (!valid) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Revisa la configuración',
+            html: buildValidationHtml(errors)
+        });
+        return;
+    }
+
+    localConfig.value = normalizedConfig;
+    saveConfig(normalizedConfig);
+
     Swal.fire({
         icon: 'success',
         title: 'Guardado',
@@ -150,34 +296,52 @@ const saveChanges = () => {
         timer: 1500,
         showConfirmButton: false
     });
+
     emit('close');
 };
 
 const exportConfig = () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(localConfig.value, null, 2));
+    const normalizedConfig = normalizeConfig(localConfig.value);
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(normalizedConfig, null, 2));
     const dlAnchorElem = document.createElement('a');
-    dlAnchorElem.setAttribute("href", dataStr);
-    dlAnchorElem.setAttribute("download", "husky-pass-config.json");
+    dlAnchorElem.setAttribute('href', dataStr);
+    dlAnchorElem.setAttribute('download', 'husky-pass-config.json');
     dlAnchorElem.click();
 };
 
 const importConfig = (event) => {
-    const file = event.target.files[0];
+    const file = event.target.files?.[0];
     if (!file) return;
+
     const reader = new FileReader();
+
     reader.onload = (e) => {
         try {
             const parsed = JSON.parse(e.target.result);
-            if (parsed.rules && parsed.templates) {
-                localConfig.value = parsed;
-                Swal.fire('Éxito', 'Configuración cargada. Recuerda hacer clic en "Guardar Cambios".', 'success');
-            } else {
-                throw new Error('Formato inválido');
+            const { valid, errors, normalizedConfig } = validateConfig(parsed);
+
+            if (!valid) {
+                throw new Error(errors.join('\n'));
             }
+
+            localConfig.value = normalizedConfig;
+
+            Swal.fire(
+                'Éxito',
+                'Configuración cargada. Recuerda hacer clic en "Guardar Cambios".',
+                'success'
+            );
         } catch (err) {
-            Swal.fire('Error', 'El archivo JSON no es válido', 'error');
+            Swal.fire(
+                'Error',
+                err.message || 'El archivo JSON no es válido',
+                'error'
+            );
+        } finally {
+            event.target.value = '';
         }
     };
+
     reader.readAsText(file);
 };
 </script>
@@ -186,6 +350,7 @@ const importConfig = (event) => {
 .slide-in {
     animation: slideIn 0.3s ease-out forwards;
 }
+
 @keyframes slideIn {
     from { transform: translateX(100%); }
     to { transform: translateX(0); }

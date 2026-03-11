@@ -81,13 +81,14 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import QrScanner from 'qr-scanner';
 import Swal from 'sweetalert2';
 import NoSleep from 'nosleep.js';
-import { 
-    fetchStudentDetails, checkDeudor, fetchTardosData, 
-    fetchDetailsByMatricula, applySuspension, sendEmail, 
+import {
+    fetchStudentDetails, checkDeudor, fetchTardosData,
+    fetchDetailsByMatricula, applySuspension, sendEmail,
     fallbackInsertScan, fetchPersonasAutorizadas,
-    sendWhatsAppMessage, sendTelegramMessage 
+    sendWhatsAppMessage, sendTelegramMessage
 } from '../services/api';
 import { getMatchedRules, appConfig } from '../services/configManager';
+import { evaluateTelegramDelivery } from '../services/deliveryRules';
 
 const emit = defineEmits(['openSettings']);
 
@@ -119,15 +120,37 @@ let conRetardos = [];
 let deudorCheckController = null;
 const processingLabel = ref('');
 
+const getConfiguredSettingsPassword = () => {
+    const candidates = [
+        import.meta.env.VITE_SETTINGS_PASSWORD,
+        import.meta.env.VITE_CONFIG_PASSWORD,
+        import.meta.env.VITE_PWD
+    ];
+
+    const configuredPassword = candidates.find(
+        value => typeof value === 'string' && value.trim() !== ''
+    );
+
+    return configuredPassword ? configuredPassword.trim() : '';
+};
+
 const checkPasswordAndOpenSettings = async () => {
-    const actualPwd = import.meta.env.PWD;
-    
+    const actualPwd = getConfiguredSettingsPassword();
+
     if (!actualPwd) {
-        // Fallback for local development if not provided
-        emit('openSettings');
+        if (import.meta.env.DEV) {
+            emit('openSettings');
+            return;
+        }
+
+        await Swal.fire({
+            icon: 'error',
+            title: 'Configuración incompleta',
+            text: 'No se encontró la contraseña de configuración. Define VITE_SETTINGS_PASSWORD en Vercel y vuelve a desplegar.'
+        });
         return;
     }
-    
+
     const { value: password } = await Swal.fire({
         title: 'Acceso Restringido',
         input: 'password',
@@ -151,10 +174,10 @@ const selectDoor = (index) => {
 };
 
 onMounted(() => {
-    const cookies = document.cookie.split("; ");
+    const cookies = document.cookie.split('; ');
     const puertaCookie = cookies.find(c => c.startsWith('puerta='));
     if (puertaCookie) selectedDoor.value = parseInt(puertaCookie.split('=')[1]) || 0;
-    
+
     fetchTardosData().then(data => conRetardos = data).catch(console.error);
 });
 
@@ -166,7 +189,7 @@ const startScanner = async (type) => {
     scanType.value = type;
     isScanning.value = true;
     noSleep.enable();
-    
+
     if (!scannerInstance) {
         scannerInstance = new QrScanner(videoEl.value, result => handleScan(result), {
             preferredCamera: 'environment',
@@ -174,7 +197,7 @@ const startScanner = async (type) => {
             maxScansPerSecond: 2
         });
     }
-    
+
     try {
         await scannerInstance.start();
     } catch (e) {
@@ -206,18 +229,18 @@ const handleScan = (result) => {
     setTimeout(() => inThrottle = false, 2000);
 
     const [, , baseURL, route, id = ''] = result.data.split('/');
-    
+
     if (processedIds.has(id)) {
         showLabel(navigator.onLine ? '¡Listo!' : 'Sin conectividad');
         return;
     }
-    
+
     if (navigator.onLine) processedIds.add(id);
     else showLabel('Sin conectividad');
 
     scannerInstance.pause();
 
-    if (!id || route === 'husky' || baseURL !== "admin.casitaiedis.edu.mx") {
+    if (!id || route === 'husky' || baseURL !== 'admin.casitaiedis.edu.mx') {
         Swal.fire({
             icon: 'error',
             title: 'Escaneo inválido',
@@ -239,7 +262,7 @@ const showLabel = (text) => {
 
 const processScanQueue = async () => {
     if (scanQueue.size > 0) {
-        for (let id of scanQueue) {
+        for (const id of scanQueue) {
             scanQueue.delete(id);
             await processSingleId(id);
         }
@@ -250,9 +273,9 @@ const processSingleId = async (id) => {
     try {
         const studentData = await fetchStudentDetails(id);
         if (!studentData || !studentData[0]) throw new Error('Data no válida');
-        
+
         const ack = await fallbackInsertScan({ data: [{ ss_id: id, type: scanType.value, puerta: selectedDoor.value }], table: 'acceso' });
-        
+
         if (ack.id == '0') {
             Swal.fire({ icon: 'warning', toast: true, title: 'Ya se escaneó', timer: 2000, position: 'top-end', showConfirmButton: false });
             restartScannerWhenNoSwal();
@@ -271,7 +294,7 @@ const processSingleId = async (id) => {
 };
 
 const handleStudentDataDisplay = async (data) => {
-    const { matricula, fullnameP, fotoP, fullnameA, nivelEduA, gradoA, grupoA, fotoA, parentesco, plantel } = data[0];
+    const { matricula, nivelEduA, gradoA, grupoA, plantel } = data[0];
 
     if (processedMatriculas.has(matricula)) return;
     processedMatriculas.add(matricula);
@@ -284,7 +307,7 @@ const handleStudentDataDisplay = async (data) => {
     const now = new Date();
     const isPrimaria = nivelEduA.toLowerCase() === 'primaria' && (now.getHours() > 8 || (now.getHours() === 8 && now.getMinutes() >= 0));
     const isSecundaria = nivelEduA.toLowerCase() === 'secundaria' && now.getHours() >= 7;
-    
+
     if ((isPrimaria || isSecundaria) && studentWithTardy && scanType.value === 'entrada') {
         await handleRetardosFlow(studentWithTardy, nivelEduA, gradoA, grupoA, matricula, plantel);
     } else {
@@ -316,14 +339,14 @@ const handleRetardosFlow = async (studentWithTardy, nivelEduA, gradoA, grupoA, m
         restartScannerWhenNoSwal();
         return;
     }
-    
+
     try {
         const details = await fetchDetailsByMatricula(matricula);
         const ids = details.map(d => d.id);
         let tableHtml = `<table class="w-full border mt-2"><thead><tr class="bg-gray-100"><th>Fecha</th><th>Hora</th></tr></thead><tbody>`;
         details.forEach(d => tableHtml += `<tr><td class="border p-2">${new Date(d.date).toLocaleDateString()}</td><td class="border p-2">${d.time}</td></tr>`);
         tableHtml += `</tbody></table>`;
-        
+
         const suspendRes = await Swal.fire({
             title: 'Detalles de Retardos', html: tableHtml, showCancelButton: true, confirmButtonText: 'Suspender',
         });
@@ -331,7 +354,7 @@ const handleRetardosFlow = async (studentWithTardy, nivelEduA, gradoA, grupoA, m
         if (suspendRes.isConfirmed) {
             await applySuspension(ids, matricula);
             sendEmail({
-                to: `dir.${nivelEduA.toLowerCase().substring(0,3)}.${plantel.toLowerCase()}@casitaiedis.edu.mx`,
+                to: `dir.${nivelEduA.toLowerCase().substring(0, 3)}.${plantel.toLowerCase()}@casitaiedis.edu.mx`,
                 subject: `Suspensión por Retardos - ${studentWithTardy.student_fullname}`,
                 message: `El alumno acumuló ${studentWithTardy.TardyCount} retardos.<br>${tableHtml}`
             });
@@ -381,32 +404,51 @@ const sendMessage = (fullnameA, fullnameP, grado, grupo, plantel, nivel, puerta)
     const matchedRules = getMatchedRules(plantel, nivel, grado);
     if (matchedRules.length === 0) return;
 
+    const telegramDelivery = evaluateTelegramDelivery({ date: new Date(), config: appConfig });
+
     const emojiNumbers = { 0: '', 1: '1️⃣', 2: '2️⃣', 3: '3️⃣', 4: '4️⃣' };
-    let puertaText = puerta === 3 ? ' POR CARRUSEL' : (puerta === 4 ? ' PEATONAL' : '');
-    
+    const puertaText = puerta === 3 ? ' POR CARRUSEL' : (puerta === 4 ? ' PEATONAL' : '');
+
     const uniquePayloads = new Map();
 
     matchedRules.forEach(rule => {
-        let template = (rule.template && rule.template.trim() !== '') ? rule.template : appConfig.templates.default;
-        
-        let msg = template
-                 .replace(/{fullnameP}/g, fullnameP)
-                 .replace(/{fullnameA}/g, fullnameA)
-                 .replace(/{grado}/g, grado)
-                 .replace(/{grupo}/g, grupo)
-                 .replace(/{plantel}/g, plantel)
-                 .replace(/{nivel}/g, nivel)
-                 .replace(/{puertaEmoji}/g, emojiNumbers[puerta] || '')
-                 .replace(/{puertaText}/g, puertaText);
-                 
-        // Setting it in a Map ensures deduplication per ChatID
+        const template = (rule.template && rule.template.trim() !== '') ? rule.template : appConfig.templates.default;
+
+        const msg = template
+            .replace(/{fullnameP}/g, fullnameP)
+            .replace(/{fullnameA}/g, fullnameA)
+            .replace(/{grado}/g, grado)
+            .replace(/{grupo}/g, grupo)
+            .replace(/{plantel}/g, plantel)
+            .replace(/{nivel}/g, nivel)
+            .replace(/{puertaEmoji}/g, emojiNumbers[puerta] || '')
+            .replace(/{puertaText}/g, puertaText);
+
         uniquePayloads.set(rule.chatId, msg);
     });
 
     uniquePayloads.forEach((msg, chatId) => {
-        const payload = { chatId: [String(chatId)], message: msg };
-        if (/@g\.us$/i.test(chatId)) sendWhatsAppMessage(payload).catch(console.error);
-        else sendTelegramMessage(payload).catch(console.error);
+        const normalizedChatId = String(chatId ?? '').trim();
+        if (!normalizedChatId) return;
+
+        const payload = { chatId: [normalizedChatId], message: msg };
+
+        if (/@g\.us$/i.test(normalizedChatId)) {
+            sendWhatsAppMessage(payload).catch(console.error);
+            return;
+        }
+
+        if (!telegramDelivery.shouldSend) {
+            console.info('Telegram delivery deferred by configuration.', {
+                chatId: normalizedChatId,
+                threshold: telegramDelivery.threshold,
+                timezone: telegramDelivery.timezone,
+                reason: telegramDelivery.reason
+            });
+            return;
+        }
+
+        sendTelegramMessage(payload).catch(console.error);
     });
 };
 
@@ -414,7 +456,7 @@ const promptMatricula = async () => {
     scannerInstance.pause();
     const { value: matricula } = await Swal.fire({
         title: 'Ingrese la matrícula', input: 'text', inputAttributes: { maxlength: 6 },
-        showCancelButton: true, confirmButtonText: `Buscar`
+        showCancelButton: true, confirmButtonText: 'Buscar'
     });
 
     if (matricula && matricula.length === 6) {
@@ -426,7 +468,7 @@ const promptMatricula = async () => {
                 <p class="text-xs font-bold mt-1">${p.fullnameP}</p>
               </div>
             `).join('');
-            
+
             Swal.fire({
                 title: 'Seleccione Persona Autorizada', html: `<div class="grid grid-cols-2 gap-2">${htmlContent}</div>`, showConfirmButton: false,
                 didRender: () => {
