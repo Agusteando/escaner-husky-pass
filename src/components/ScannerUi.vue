@@ -520,7 +520,7 @@ const _showSuccessModal = (studentInfo) => {
     });
 
     if (scanType.value !== 'entrada') {
-        void _sendMessage(fullnameA, fullnameP, gradoA, grupoA, plantel, nivelEduA, selectedDoor.value);
+        void _sendMessage(fullnameA, gradoA, grupoA, plantel, nivelEduA, selectedDoor.value);
     }
 };
 
@@ -607,8 +607,10 @@ const _showLabel = (text) => {
 };
 
 // ─── Telegram / WhatsApp notification ────────────────────────────────────────
-// Mirrors script_2.js sendMessage / getChatId / routeOutbound.
-const _sendMessage = async (fullnameA, fullnameP, grado, grupo, plantel, nivel, puerta) => {
+// Mirrors script_2.js sendMessage exactly.
+// script_2.js: sendMessage(fullnameA, gradoA, grupoA, plantel, nivelEduA, puertaValue)
+// The parent name (fullnameP) is never passed — only student info goes in the notification.
+const _sendMessage = async (fullnameA, grado, grupo, plantel, nivel, puerta) => {
     try {
         const matchedRules = getMatchedRules(plantel, nivel, grado);
         if (!matchedRules || matchedRules.length === 0) return;
@@ -625,7 +627,6 @@ const _sendMessage = async (fullnameA, fullnameP, grado, grupo, plantel, nivel, 
                 : appConfig.templates?.default || '**{fullnameA}** {grado} {grupo} {puertaEmoji}🚪{puertaText}';
 
             const msg = template
-                .replace(/{fullnameP}/g, fullnameP)
                 .replace(/{fullnameA}/g, fullnameA)
                 .replace(/{grado}/g, grado)
                 .replace(/{grupo}/g, grupo)
