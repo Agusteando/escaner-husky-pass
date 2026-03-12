@@ -451,55 +451,86 @@ const _handleStudentDataDisplay = async (data) => {
     }
 };
 
+// ─── image preloader ──────────────────────────────────────────────────────────
+// Loads a URL into the browser cache before the modal opens so the <img> tag
+// renders it instantly. Falls back to placeholder on error or timeout.
+const PHOTO_MODAL_TIMER_MS    = 4000;  // how long the success modal stays open
+const PHOTO_PRELOAD_TIMEOUT_MS = 3500; // max wait per photo before using placeholder
+const PHOTO_PLACEHOLDER = 'https://via.placeholder.com/150?text=No+Image';
+
+const _preloadImage = (src) => {
+    const url = src && src.trim() ? src : null;
+    if (!url) return Promise.resolve(PHOTO_PLACEHOLDER);
+
+    return new Promise((resolve) => {
+        const img = new Image();
+        const timer = setTimeout(() => {
+            img.onload = img.onerror = null;
+            resolve(PHOTO_PLACEHOLDER); // timed out
+        }, PHOTO_PRELOAD_TIMEOUT_MS);
+
+        img.onload = () => { clearTimeout(timer); resolve(url); };
+        img.onerror = () => { clearTimeout(timer); resolve(PHOTO_PLACEHOLDER); };
+        img.src = url;
+    });
+};
+
 // ─── success modal ────────────────────────────────────────────────────────────
-// Mirrors script_2.js Swal.fire in handleStudentDataDisplay (else branch).
-// Auto-closes after 1600 ms for continuous scanning; restart is armed via .then().
+// Preloads both photos concurrently BEFORE opening Swal so they render
+// instantly. Timer starts only after images are ready.
 const _showSuccessModal = (studentInfo) => {
     const { fullnameP, fotoP, fullnameA, nivelEduA, gradoA, grupoA, fotoA, parentesco, plantel } = studentInfo;
 
     const colors = {
-        guardería: '#8EC152', preescolar: '#E94B4D',
-        primaria: '#FDC53D', secundaria: '#5AA6DC', preparatoria: '#514F9D'
+        'guarderia': '#8EC152', 'guardería': '#8EC152',
+        'preescolar': '#E94B4D',
+        'primaria': '#FDC53D',
+        'secundaria': '#5AA6DC',
+        'preparatoria': '#514F9D'
     };
     const color = colors[String(nivelEduA || '').toLowerCase()] || '#8EC152';
 
-    // Fire-and-forget: the .then() arms the restart poller.
-    void Swal.fire({
-        icon: 'success',
-        title: 'Escaneo exitoso',
-        html: `
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
-              <div style="background-color:${color};border-radius:999px;padding:4px 20px;margin-bottom:12px;display:inline-flex;align-items:center;">
-                <span style="color:#fff;font-weight:bold;text-transform:uppercase;">${nivelEduA}</span>
-              </div>
-              <div style="background:#585858;color:#fff;width:100%;border-radius:6px;padding:8px 12px;margin-bottom:12px;text-align:center;">
-                <p style="margin:0;font-size:1rem;font-weight:bold;">${fullnameA}</p>
-                <small>${gradoA} ${grupoA}</small>
-              </div>
-              <p style="margin-top:8px;margin-bottom:4px;">Persona autorizada:<br><strong>${fullnameP}</strong></p>
-              <small>(${parentesco})</small>
-              <div style="display:flex;justify-content:center;gap:12px;margin-top:12px;">
-                <img src="${fotoA || 'https://via.placeholder.com/150?text=No+Image'}"
-                     alt="${fullnameA}"
-                     style="width:120px;height:120px;object-fit:cover;border-radius:4px;"
-                     onerror="this.src='https://via.placeholder.com/150?text=No+Image'">
-                <img src="${fotoP || 'https://via.placeholder.com/150?text=No+Image'}"
-                     alt="${fullnameP}"
-                     style="width:120px;height:120px;object-fit:cover;border-radius:4px;"
-                     onerror="this.src='https://via.placeholder.com/150?text=No+Image'">
-              </div>
-            </div>
-        `,
-        showConfirmButton: false,
-        timer: 1600,
-        timerProgressBar: true,
-        customClass: 'my-swal'
-    }).then(() => {
-        restartScannerWhenNoSwal();
-    });
+    // Fire-and-forget the async preload+show flow.
+    void (async () => {
+        // Preload both photos concurrently; each has its own timeout fallback.
+        const [srcA, srcP] = await Promise.all([
+            _preloadImage(fotoA),
+            _preloadImage(fotoP),
+        ]);
 
-    // Send Telegram/WhatsApp notification – fire-and-forget.
-    // Matches script_2.js: sendMessage called for all types except 'entrada'.
+        // Both images are now cached — modal renders them instantly with no flash.
+        await Swal.fire({
+            icon: 'success',
+            title: 'Escaneo exitoso',
+            html: `
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                  <div style="background-color:${color};border-radius:999px;padding:4px 20px;margin-bottom:12px;display:inline-flex;align-items:center;">
+                    <span style="color:#fff;font-weight:bold;text-transform:uppercase;">${nivelEduA}</span>
+                  </div>
+                  <div style="background:#585858;color:#fff;width:100%;border-radius:6px;padding:8px 12px;margin-bottom:12px;text-align:center;">
+                    <p style="margin:0;font-size:1rem;font-weight:bold;">${fullnameA}</p>
+                    <small>${gradoA} ${grupoA}</small>
+                  </div>
+                  <p style="margin-top:8px;margin-bottom:4px;">Persona autorizada:<br><strong>${fullnameP}</strong></p>
+                  <small>(${parentesco})</small>
+                  <div style="display:flex;justify-content:center;gap:12px;margin-top:12px;">
+                    <img src="${srcA}" alt="${fullnameA}"
+                         style="width:120px;height:120px;object-fit:cover;border-radius:4px;">
+                    <img src="${srcP}" alt="${fullnameP}"
+                         style="width:120px;height:120px;object-fit:cover;border-radius:4px;">
+                  </div>
+                </div>
+            `,
+            showConfirmButton: false,
+            timer: PHOTO_MODAL_TIMER_MS,
+            timerProgressBar: true,
+            customClass: 'my-swal'
+        });
+
+        restartScannerWhenNoSwal();
+    })();
+
+    // Send notification fire-and-forget in parallel — don't wait for photo preload.
     if (scanType.value !== 'entrada') {
         void _sendMessage(fullnameA, fullnameP, gradoA, grupoA, plantel, nivelEduA, selectedDoor.value);
     }
