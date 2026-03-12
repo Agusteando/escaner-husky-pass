@@ -451,86 +451,67 @@ const _handleStudentDataDisplay = async (data) => {
     }
 };
 
-// ─── image preloader ──────────────────────────────────────────────────────────
-// Loads a URL into the browser cache before the modal opens so the <img> tag
-// renders it instantly. Falls back to placeholder on error or timeout.
-const PHOTO_MODAL_TIMER_MS    = 4000;  // how long the success modal stays open
-const PHOTO_PRELOAD_TIMEOUT_MS = 3500; // max wait per photo before using placeholder
-const PHOTO_PLACEHOLDER = 'https://via.placeholder.com/150?text=No+Image';
+// ─── success modal ────────────────────────────────────────────────────────────
+// Opens immediately with spinner placeholders, then swaps in real photos as
+// they arrive inside the already-open modal — no waiting before display.
+const PHOTO_MODAL_TIMER_MS = 4000;
+const PHOTO_PLACEHOLDER    = 'https://via.placeholder.com/150?text=Sin+foto';
 
-const _preloadImage = (src) => {
-    const url = src && src.trim() ? src : null;
-    if (!url) return Promise.resolve(PHOTO_PLACEHOLDER);
-
-    return new Promise((resolve) => {
-        const img = new Image();
-        const timer = setTimeout(() => {
-            img.onload = img.onerror = null;
-            resolve(PHOTO_PLACEHOLDER); // timed out
-        }, PHOTO_PRELOAD_TIMEOUT_MS);
-
-        img.onload = () => { clearTimeout(timer); resolve(url); };
-        img.onerror = () => { clearTimeout(timer); resolve(PHOTO_PLACEHOLDER); };
-        img.src = url;
-    });
+const _loadIntoImg = (domImg, src) => {
+    if (!src || !src.trim()) { domImg.src = PHOTO_PLACEHOLDER; return; }
+    const loader = new Image();
+    loader.onload = () => { domImg.src = src; domImg.style.filter = ''; };
+    loader.onerror = () => { domImg.src = PHOTO_PLACEHOLDER; domImg.style.filter = ''; };
+    loader.src = src;
 };
 
-// ─── success modal ────────────────────────────────────────────────────────────
-// Preloads both photos concurrently BEFORE opening Swal so they render
-// instantly. Timer starts only after images are ready.
 const _showSuccessModal = (studentInfo) => {
     const { fullnameP, fotoP, fullnameA, nivelEduA, gradoA, grupoA, fotoA, parentesco, plantel } = studentInfo;
 
     const colors = {
         'guarderia': '#8EC152', 'guardería': '#8EC152',
-        'preescolar': '#E94B4D',
-        'primaria': '#FDC53D',
-        'secundaria': '#5AA6DC',
-        'preparatoria': '#514F9D'
+        'preescolar': '#E94B4D', 'primaria': '#FDC53D',
+        'secundaria': '#5AA6DC', 'preparatoria': '#514F9D'
     };
     const color = colors[String(nivelEduA || '').toLowerCase()] || '#8EC152';
 
-    // Fire-and-forget the async preload+show flow.
-    void (async () => {
-        // Preload both photos concurrently; each has its own timeout fallback.
-        const [srcA, srcP] = await Promise.all([
-            _preloadImage(fotoA),
-            _preloadImage(fotoP),
-        ]);
+    // Spinner SVG used as placeholder while real photo loads.
+    const spinner = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 50 50'%3E%3Ccircle cx='25' cy='25' r='20' fill='%23eee'/%3E%3Cpath d='M25 5a20 20 0 0 1 0 40' stroke='%23aaa' stroke-width='4' fill='none'%3E%3CanimateTransform attributeName='transform' type='rotate' from='0 25 25' to='360 25 25' dur='0.8s' repeatCount='indefinite'/%3E%3C/path%3E%3C/svg%3E`;
 
-        // Both images are now cached — modal renders them instantly with no flash.
-        await Swal.fire({
-            icon: 'success',
-            title: 'Escaneo exitoso',
-            html: `
-                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
-                  <div style="background-color:${color};border-radius:999px;padding:4px 20px;margin-bottom:12px;display:inline-flex;align-items:center;">
-                    <span style="color:#fff;font-weight:bold;text-transform:uppercase;">${nivelEduA}</span>
-                  </div>
-                  <div style="background:#585858;color:#fff;width:100%;border-radius:6px;padding:8px 12px;margin-bottom:12px;text-align:center;">
-                    <p style="margin:0;font-size:1rem;font-weight:bold;">${fullnameA}</p>
-                    <small>${gradoA} ${grupoA}</small>
-                  </div>
-                  <p style="margin-top:8px;margin-bottom:4px;">Persona autorizada:<br><strong>${fullnameP}</strong></p>
-                  <small>(${parentesco})</small>
-                  <div style="display:flex;justify-content:center;gap:12px;margin-top:12px;">
-                    <img src="${srcA}" alt="${fullnameA}"
-                         style="width:120px;height:120px;object-fit:cover;border-radius:4px;">
-                    <img src="${srcP}" alt="${fullnameP}"
-                         style="width:120px;height:120px;object-fit:cover;border-radius:4px;">
-                  </div>
-                </div>
-            `,
-            showConfirmButton: false,
-            timer: PHOTO_MODAL_TIMER_MS,
-            timerProgressBar: true,
-            customClass: 'my-swal'
-        });
+    void Swal.fire({
+        icon: 'success',
+        title: 'Escaneo exitoso',
+        html: `
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
+              <div style="background-color:${color};border-radius:999px;padding:4px 20px;margin-bottom:12px;display:inline-flex;align-items:center;">
+                <span style="color:#fff;font-weight:bold;text-transform:uppercase;">${nivelEduA}</span>
+              </div>
+              <div style="background:#585858;color:#fff;width:100%;border-radius:6px;padding:8px 12px;margin-bottom:12px;text-align:center;">
+                <p style="margin:0;font-size:1rem;font-weight:bold;">${fullnameA}</p>
+                <small>${gradoA} ${grupoA}</small>
+              </div>
+              <p style="margin-top:8px;margin-bottom:4px;">Persona autorizada:<br><strong>${fullnameP}</strong></p>
+              <small>(${parentesco})</small>
+              <div style="display:flex;justify-content:center;gap:12px;margin-top:12px;">
+                <img id="swal-foto-alumno" src="${spinner}" alt="${fullnameA}"
+                     style="width:120px;height:120px;object-fit:cover;border-radius:4px;filter:blur(2px);transition:filter 0.3s;">
+                <img id="swal-foto-persona" src="${spinner}" alt="${fullnameP}"
+                     style="width:120px;height:120px;object-fit:cover;border-radius:4px;filter:blur(2px);transition:filter 0.3s;">
+              </div>
+            </div>
+        `,
+        showConfirmButton: false,
+        timer: PHOTO_MODAL_TIMER_MS,
+        timerProgressBar: true,
+        customClass: 'my-swal',
+        didOpen: () => {
+            // Kick off both loads in parallel the moment the modal is visible.
+            // Each one swaps the src directly into the already-rendered <img>.
+            _loadIntoImg(document.getElementById('swal-foto-alumno'), fotoA);
+            _loadIntoImg(document.getElementById('swal-foto-persona'), fotoP);
+        }
+    }).then(() => restartScannerWhenNoSwal());
 
-        restartScannerWhenNoSwal();
-    })();
-
-    // Send notification fire-and-forget in parallel — don't wait for photo preload.
     if (scanType.value !== 'entrada') {
         void _sendMessage(fullnameA, fullnameP, gradoA, grupoA, plantel, nivelEduA, selectedDoor.value);
     }
