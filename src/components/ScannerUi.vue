@@ -321,8 +321,6 @@ const handleScan = (result) => {
         scanQueue.add(id);
         processScanQueue();
     }
-
-    restartScannerWhenNoSwal();
 };
 
 const showLabel = (text) => {
@@ -482,7 +480,7 @@ const showSuccessFlow = async (studentInfo) => {
                 <small>${gradoA} ${grupoA}</small>
               </div>
               <p style="margin-top:8px;margin-bottom:4px;">Persona autorizada:<br><strong>${fullnameP}</strong></p>
-              <small>({{parentesco}})</small>
+              <small>(${parentesco})</small>
               <div style="display:flex;justify-content:center;gap:12px;margin-top:12px;">
                 <img src="${fotoA || 'https://via.placeholder.com/150?text=No+Image'}" alt="${fullnameA}" style="width:120px;height:120px;object-fit:cover;border-radius:4px;">
                 <img src="${fotoP || 'https://via.placeholder.com/150?text=No+Image'}" alt="${fullnameP}" style="width:120px;height:120px;object-fit:cover;border-radius:4px;">
