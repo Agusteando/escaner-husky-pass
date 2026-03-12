@@ -454,7 +454,7 @@ const _handleStudentDataDisplay = async (data) => {
 // ─── success modal ────────────────────────────────────────────────────────────
 // Opens immediately with spinner placeholders, then swaps in real photos as
 // they arrive inside the already-open modal — no waiting before display.
-const PHOTO_MODAL_TIMER_MS = 4000;
+const PHOTO_MODAL_TIMER_MS = 3000;
 const PHOTO_PLACEHOLDER    = 'https://via.placeholder.com/150?text=Sin+foto';
 
 const _loadIntoImg = (domImg, src) => {
@@ -505,12 +505,19 @@ const _showSuccessModal = (studentInfo) => {
         timerProgressBar: true,
         customClass: 'my-swal',
         didOpen: () => {
-            // Kick off both loads in parallel the moment the modal is visible.
-            // Each one swaps the src directly into the already-rendered <img>.
             _loadIntoImg(document.getElementById('swal-foto-alumno'), fotoA);
             _loadIntoImg(document.getElementById('swal-foto-persona'), fotoP);
+
+            // Close immediately on any touch — no need to wait for the timer.
+            Swal.getPopup()?.addEventListener('touchstart', () => Swal.close(), { once: true, passive: true });
         }
-    }).then(() => restartScannerWhenNoSwal());
+    }).then(() => {
+        // Start scanner right away — don't wait for the poller's 1s tick.
+        if (scannerInstance && isScanning.value) {
+            scannerInstance.start().catch(() => {});
+        }
+        restartScannerWhenNoSwal(); // safety net if start() fails
+    });
 
     if (scanType.value !== 'entrada') {
         void _sendMessage(fullnameA, fullnameP, gradoA, grupoA, plantel, nivelEduA, selectedDoor.value);
