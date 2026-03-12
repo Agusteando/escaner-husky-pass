@@ -379,20 +379,16 @@ const _processScanQueue = async () => {
     }
 };
 
-// Mirrors script_2.js sendAjaxRequest:
-//   1. Fetch student data (awaited – we need it for display).
-//   2. Immediately show the result modal (fire-and-forget; does NOT block scanning restart).
-//   3. Fire-and-forget the DB insert.
 const _sendAjaxRequest = async (id) => {
     try {
         const data = await fetchStudentDetails(id);
 
         if (!data || !data[0]) throw new Error('Data no válida');
 
-        // Show modal immediately after fetch – mirrors handleInsertResponse({id:1})
-        // being called synchronously before the WebSocket ack in script_2.js.
-        // Fire-and-forget so the queue loop is not blocked.
-        void _handleStudentDataDisplay(data);
+        // MUST await – not fire-and-forget.
+        // Using `void` here silently swallowed any TypeError thrown when
+        // destructuring data[0] fields, causing the black-flash / no-modal bug.
+        await _handleStudentDataDisplay(data);
 
         // Insert record in the background (fire-and-forget).
         void fallbackInsertScan({
@@ -401,17 +397,25 @@ const _sendAjaxRequest = async (id) => {
         }).catch(console.error);
 
     } catch (err) {
+        console.error('sendAjaxRequest error:', err);
         if (err.message === 'Código QR inválido') {
-            Swal.fire({
+            await Swal.fire({
                 icon: 'error',
                 title: 'Esta persona autorizada fue anulada - Reimprimir',
                 text: 'Su QR fue anulado, hay que volverlo a generar desde la plataforma e imprimirlo nuevamente.'
-            }).then(() => restartScannerWhenNoSwal());
+            });
         } else {
-            console.error('sendAjaxRequest error:', err);
-            // Delay matches script_2.js handleFetchError.
-            setTimeout(() => restartScannerWhenNoSwal(), 2000);
+            // Always show something visible – never fail silently.
+            await Swal.fire({
+                icon: 'error',
+                title: 'Error al procesar escaneo',
+                text: err?.message || 'Inténtalo de nuevo.',
+                timer: 3000,
+                timerProgressBar: true,
+                showConfirmButton: false
+            });
         }
+        restartScannerWhenNoSwal();
     }
 };
 
