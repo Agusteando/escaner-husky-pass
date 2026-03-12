@@ -89,12 +89,36 @@ import { getMatchedRules, appConfig } from '../services/configManager';
 
 const emit = defineEmits(['openSettings']);
 
+// ─── refs ────────────────────────────────────────────────────────────────────
 const isScanning = ref(false);
-const scanType = ref('');
-const videoEl = ref(null);
+const scanType   = ref('');
+const videoEl    = ref(null);
+const processingLabel = ref('');
+
+// ─── scanner state ────────────────────────────────────────────────────────────
+// One instance per session; destroyed and recreated on each startScanner call
+// (mirrors how script_2.js calls `new QrScanner(...)` inside startScanner).
 let scannerInstance = null;
 const noSleep = new NoSleep();
 
+// Per-session duplicate-scan guards; cleared on each startScanner call.
+let processedIds       = new Set();
+let processedMatriculas = new Set();
+let scanQueue          = new Set();
+
+// Throttle flag – mirrors script_2.js's throttle(scanSuccess, 2000)
+let inThrottle = false;
+
+// Restart poller handle
+let restartIntervalId  = null;
+
+// Deudor abort controller
+let deudorCheckController = null;
+
+// ─── runtime data ─────────────────────────────────────────────────────────────
+let conRetardos = [];
+
+// ─── door / UI state ──────────────────────────────────────────────────────────
 const selectedDoor = ref(0);
 const doors = [
     { label: 'Default', value: 0 },
@@ -104,6 +128,7 @@ const doors = [
     { label: 'Puerta 4', value: 4 }
 ];
 
+// ─── computed ─────────────────────────────────────────────────────────────────
 const shortCommitHash = computed(() => {
     const configuredHash =
         import.meta.env.VITE_COMMIT_HASH ||
@@ -111,48 +136,48 @@ const shortCommitHash = computed(() => {
         (typeof __APP_COMMIT_HASH__ !== 'undefined' ? __APP_COMMIT_HASH__ : '') ||
         globalThis?.__APP_COMMIT_HASH__ ||
         'dev-local';
-
     return String(configuredHash).trim().slice(0, 10);
 });
 
 const headerText = computed(() => {
     if (scanType.value === 'entrada') return 'ENTRADA';
-    if (scanType.value === 'salida') return 'SALIDA';
+    if (scanType.value === 'salida')  return 'SALIDA';
     return 'EVENTO';
 });
 
-const scanQueue = new Set();
-const processedIds = new Set();
-const processedMatriculas = new Set();
-let conRetardos = [];
-let deudorCheckController = null;
-const processingLabel = ref('');
-let restartIntervalId = null;
-let isStartInFlight = false;
+// ─── lifecycle ────────────────────────────────────────────────────────────────
+onMounted(() => {
+    const cookies    = document.cookie.split('; ');
+    const puertaCookie = cookies.find(c => c.startsWith('puerta='));
+    if (puertaCookie) selectedDoor.value = parseInt(puertaCookie.split('=')[1], 10) || 0;
 
+    fetchTardosData().then(data => { conRetardos = data; }).catch(console.error);
+});
+
+onUnmounted(() => {
+    _clearRestartPoller();
+    if (scannerInstance) {
+        scannerInstance.destroy();
+        scannerInstance = null;
+    }
+});
+
+// ─── settings / password ─────────────────────────────────────────────────────
 const getConfiguredSettingsPassword = () => {
     const candidates = [
         import.meta.env.VITE_SETTINGS_PASSWORD,
         import.meta.env.VITE_CONFIG_PASSWORD,
         import.meta.env.VITE_PWD
     ];
-
-    const configuredPassword = candidates.find(
-        value => typeof value === 'string' && value.trim() !== ''
-    );
-
-    return configuredPassword ? configuredPassword.trim() : '';
+    const found = candidates.find(v => typeof v === 'string' && v.trim() !== '');
+    return found ? found.trim() : '';
 };
 
 const checkPasswordAndOpenSettings = async () => {
     const actualPwd = getConfiguredSettingsPassword();
 
     if (!actualPwd) {
-        if (import.meta.env.DEV) {
-            emit('openSettings');
-            return;
-        }
-
+        if (import.meta.env.DEV) { emit('openSettings'); return; }
         await Swal.fire({
             icon: 'error',
             title: 'Configuración incompleta',
@@ -178,133 +203,150 @@ const checkPasswordAndOpenSettings = async () => {
     }
 };
 
+// ─── door selection ───────────────────────────────────────────────────────────
 const selectDoor = (index) => {
     selectedDoor.value = index;
     document.cookie = `puerta=${index}; path=/;`;
 };
 
-onMounted(() => {
-    const cookies = document.cookie.split('; ');
-    const puertaCookie = cookies.find(c => c.startsWith('puerta='));
-    if (puertaCookie) selectedDoor.value = parseInt(puertaCookie.split('=')[1], 10) || 0;
+// ─── scanner lifecycle ────────────────────────────────────────────────────────
+// Mirrors script_2.js startScanner: always builds a fresh QrScanner instance,
+// resets duplicate-guards, and starts with retry logic.
 
-    fetchTardosData().then(data => {
-        conRetardos = data;
-    }).catch(console.error);
-});
-
-onUnmounted(() => {
-    if (restartIntervalId) {
-        clearInterval(restartIntervalId);
-        restartIntervalId = null;
-    }
-    if (scannerInstance) scannerInstance.destroy();
-});
-
-const startScannerWithRetry = async (maxAttempts = 5) => {
-    if (!scannerInstance || isStartInFlight) return;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        try {
-            isStartInFlight = true;
-            await scannerInstance.start();
-            isStartInFlight = false;
-            return;
-        } catch (e) {
-            isStartInFlight = false;
-            if (attempt === maxAttempts) throw e;
-            await new Promise(resolve => setTimeout(resolve, 350));
-        }
-    }
-};
-
-const startScanner = async (type) => {
-    scanType.value = type;
+const startScanner = (type) => {
+    scanType.value   = type;
     isScanning.value = true;
     noSleep.enable();
 
-    if (restartIntervalId) {
-        clearInterval(restartIntervalId);
-        restartIntervalId = null;
+    // Clear duplicate-scan guards for the new session (same as a fresh page load
+    // in script_2.js where the sets start empty on every button click).
+    processedIds.clear();
+    processedMatriculas.clear();
+    scanQueue.clear();
+    processingLabel.value = '';
+
+    _clearRestartPoller();
+
+    // Destroy any existing instance before creating a new one.
+    // This guarantees a fresh camera stream and avoids black-screen issues
+    // caused by stale internal state in the previous QrScanner.
+    if (scannerInstance) {
+        try { scannerInstance.destroy(); } catch (_) {}
+        scannerInstance = null;
     }
 
-    if (!scannerInstance) {
-        scannerInstance = new QrScanner(videoEl.value, result => handleScan(result), {
-            preferredCamera: 'environment',
-            highlightCodeOutline: true,
-            maxScansPerSecond: 2
-        });
-    }
+    scannerInstance = new QrScanner(videoEl.value, result => _throttledScanSuccess(result), {
+        preferredCamera: 'environment',
+        highlightCodeOutline: true,
+        maxScansPerSecond: 2
+    });
 
-    try {
-        await startScannerWithRetry();
-    } catch (e) {
-        console.error('Camera error', e);
-        Swal.fire('Error', 'No se pudo acceder a la cámara.', 'error');
-        stopScanner();
-    }
+    // Start with retry – mirrors script_2.js startScannerWithRetry
+    _startWithRetry(scannerInstance, 5);
 };
 
 const stopScanner = () => {
     isScanning.value = false;
+    processingLabel.value = '';
+    _clearRestartPoller();
+
+    if (scannerInstance) {
+        try { scannerInstance.stop(); } catch (_) {}
+        // Do NOT destroy here; the user may press Entrada/Salida again quickly.
+    }
+
+    noSleep.disable();
+};
+
+// Internal: start with up to maxAttempts retries, 1 s apart.
+// Mirrors script_2.js startScannerWithRetry.
+const _startWithRetry = (instance, maxAttempts, attempt = 1) => {
+    if (!instance || !isScanning.value) return;
+
+    instance.start()
+        .then(() => {
+            console.log(`Scanner started (attempt ${attempt})`);
+        })
+        .catch(err => {
+            console.error(`Scanner start error (attempt ${attempt}):`, err);
+            if (attempt < maxAttempts) {
+                setTimeout(() => _startWithRetry(instance, maxAttempts, attempt + 1), 1000);
+            } else {
+                console.error('Max start attempts reached.');
+                Swal.fire('Error', 'No se pudo acceder a la cámara.', 'error');
+                stopScanner();
+            }
+        });
+};
+
+// Internal: clear the restart poller.
+const _clearRestartPoller = () => {
     if (restartIntervalId) {
         clearInterval(restartIntervalId);
         restartIntervalId = null;
     }
-    if (scannerInstance) scannerInstance.stop();
-    noSleep.disable();
-    processingLabel.value = '';
 };
 
+// Mirrors script_2.js restartScannerWhenNoSwal:
+// Poll every 1 s; when no Swal is visible, call scanner.start().
+// Called unconditionally after every scan (both normal and duplicate paths).
 const restartScannerWhenNoSwal = () => {
-    if (restartIntervalId) return;
+    // Allow a new poller even if one was already running (arm/re-arm).
+    _clearRestartPoller();
 
-    restartIntervalId = setInterval(async () => {
+    restartIntervalId = setInterval(() => {
         if (!isScanning.value || !scannerInstance) {
-            clearInterval(restartIntervalId);
-            restartIntervalId = null;
+            _clearRestartPoller();
             return;
         }
 
-        if (Swal.isVisible()) return;
+        if (Swal.isVisible()) return; // wait until modal is gone
 
-        try {
-            await startScannerWithRetry(3);
-            clearInterval(restartIntervalId);
-            restartIntervalId = null;
-        } catch (e) {
-            console.warn('Scanner restart retry failed, will keep retrying...', e);
-        }
+        _clearRestartPoller();
+        scannerInstance.start().catch(err => {
+            console.warn('restartScannerWhenNoSwal: scanner.start() failed:', err);
+        });
     }, 1000);
 };
 
-let inThrottle = false;
-const handleScan = (result) => {
+// ─── scan throttle ────────────────────────────────────────────────────────────
+// Mirrors script_2.js throttle(scanSuccess, 2000).
+const _throttledScanSuccess = (result) => {
     if (inThrottle) return;
     inThrottle = true;
-    setTimeout(() => {
-        inThrottle = false;
-    }, 2000);
+    setTimeout(() => { inThrottle = false; }, 2000);
+    _scanSuccess(result);
+};
 
+// ─── scan success handler ─────────────────────────────────────────────────────
+// Mirrors script_2.js scanSuccess exactly.
+const _scanSuccess = (result) => {
     const [, , baseURL, route, id = ''] = result.data.split('/');
 
+    // Already processed – show label and bail (scanner stays running).
     if (processedIds.has(id)) {
-        showLabel(navigator.onLine ? '¡Listo!' : 'Sin conectividad, acercate al Router');
+        _showLabel(navigator.onLine ? '¡Listo!' : 'Sin conectividad, acércate al Router');
         return;
     }
 
-    if (navigator.onLine) processedIds.add(id);
-    else showLabel('Sin conectividad, acercate al Router');
+    if (navigator.onLine) {
+        processedIds.add(id);
+    } else {
+        _showLabel('Sin conectividad, acércate al Router');
+        // Do not proceed when offline (matches original behaviour).
+        return;
+    }
 
+    // Pause scanner while we process.
     scannerInstance.pause();
 
     if (!id) {
         Swal.fire({
             icon: 'error',
             title: 'Escaneo inválido',
-            html: 'El QR no coincide con algún registro vigente. Si se trata de un error, asegúrate de que no haya reflejos, sombras u obstrucciones que puedan afectar la precisión del escaneo.',
+            html: 'El QR no coincide con algún registro vigente. Si se trata de un error, asegúrate de que no haya reflejos, sombras u obstrucciones.',
             position: 'top'
-        }).then(restartScannerWhenNoSwal);
+        }).then(() => restartScannerWhenNoSwal());
         return;
     }
 
@@ -313,94 +355,163 @@ const handleScan = (result) => {
             icon: 'error',
             title: 'Error',
             text: 'Este QR no debe escanearse con este escáner'
-        }).then(restartScannerWhenNoSwal);
+        }).then(() => restartScannerWhenNoSwal());
         return;
     }
 
+    // Enqueue and process.
     if (!scanQueue.has(id)) {
         scanQueue.add(id);
-        processScanQueue();
+        _processScanQueue();
+    }
+
+    // Arm restart poller immediately (matches script_2.js calling
+    // restartScannerWhenNoSwal right after processScanQueue).
+    restartScannerWhenNoSwal();
+};
+
+// ─── queue processing ─────────────────────────────────────────────────────────
+// Mirrors script_2.js processScanQueue / sendAjaxRequest.
+const _processScanQueue = async () => {
+    for (const id of [...scanQueue]) {
+        scanQueue.delete(id);
+        await _sendAjaxRequest(id);
     }
 };
 
-const showLabel = (text) => {
-    processingLabel.value = text;
-    setTimeout(() => {
-        processingLabel.value = '';
-    }, 2000);
-};
-
-const processScanQueue = async () => {
-    if (scanQueue.size > 0) {
-        for (const id of scanQueue) {
-            scanQueue.delete(id);
-            await processSingleId(id);
-        }
-    }
-};
-
-const processSingleId = async (id) => {
+// Mirrors script_2.js sendAjaxRequest:
+//   1. Fetch student data (awaited – we need it for display).
+//   2. Immediately show the result modal (fire-and-forget; does NOT block scanning restart).
+//   3. Fire-and-forget the DB insert.
+const _sendAjaxRequest = async (id) => {
     try {
-        const studentData = await fetchStudentDetails(id);
-        if (!studentData || !studentData[0]) throw new Error('Data no válida');
+        const data = await fetchStudentDetails(id);
 
-        void handleStudentDataDisplay(studentData);
+        if (!data || !data[0]) throw new Error('Data no válida');
 
+        // Show modal immediately after fetch – mirrors handleInsertResponse({id:1})
+        // being called synchronously before the WebSocket ack in script_2.js.
+        // Fire-and-forget so the queue loop is not blocked.
+        void _handleStudentDataDisplay(data);
+
+        // Insert record in the background (fire-and-forget).
         void fallbackInsertScan({
             data: [{ ss_id: id, type: scanType.value, puerta: selectedDoor.value }],
             table: 'acceso'
-        }).then(ack => {
-            if (String(ack?.id) === '0') {
-                showLabel('¡Listo!');
-            }
         }).catch(console.error);
-    } catch (e) {
-        if (e.message === 'Código QR inválido') {
+
+    } catch (err) {
+        if (err.message === 'Código QR inválido') {
             Swal.fire({
                 icon: 'error',
                 title: 'Esta persona autorizada fue anulada - Reimprimir',
                 text: 'Su QR fue anulado, hay que volverlo a generar desde la plataforma e imprimirlo nuevamente.'
-            }).then(restartScannerWhenNoSwal);
+            }).then(() => restartScannerWhenNoSwal());
         } else {
-            console.error(e);
-            setTimeout(restartScannerWhenNoSwal, 1000);
+            console.error('sendAjaxRequest error:', err);
+            // Delay matches script_2.js handleFetchError.
+            setTimeout(() => restartScannerWhenNoSwal(), 2000);
         }
     }
 };
 
-const handleStudentDataDisplay = async (data) => {
+// ─── student data display ─────────────────────────────────────────────────────
+// Mirrors script_2.js handleStudentDataDisplay.
+const _handleStudentDataDisplay = async (data) => {
     const { matricula, nivelEduA, gradoA, grupoA, plantel } = data[0];
 
+    // Duplicate-matricula guard – but ALWAYS ensure scanner can restart.
     if (processedMatriculas.has(matricula)) {
+        console.log(`Matricula ${matricula} already processed.`);
+        // Must restart the scanner here; without this the scanner stays paused.
+        restartScannerWhenNoSwal();
         return;
     }
     processedMatriculas.add(matricula);
 
+    // Deudor check – fire-and-forget, never blocks scan flow.
     if (scanType.value === 'entrada') {
-        void checkDeudorAndToast(matricula);
+        void _checkDeudorAndToast(matricula);
     }
 
     const studentWithTardy = conRetardos.find(s => s.matricula === matricula);
-    const now = new Date();
+    const now   = new Date();
     const level = String(nivelEduA || '').toLowerCase();
-    const isPrimaria = level === 'primaria' && (now.getHours() > 8 || (now.getHours() === 8 && now.getMinutes() >= 0));
+    const isPrimaria  = level === 'primaria'   && (now.getHours() > 8 || (now.getHours() === 8 && now.getMinutes() >= 0));
     const isSecundaria = level === 'secundaria' && now.getHours() >= 7;
 
     if ((isPrimaria || isSecundaria) && studentWithTardy && scanType.value === 'entrada') {
-        await handleRetardosFlow(studentWithTardy, nivelEduA, gradoA, grupoA, matricula, plantel);
+        await _handleRetardosFlow(studentWithTardy, nivelEduA, gradoA, grupoA, matricula, plantel);
     } else {
-        await showSuccessFlow(data[0]);
+        _showSuccessModal(data[0]);
     }
 };
 
-const checkDeudorAndToast = async (matricula) => {
-    if (scanType.value !== 'entrada') return;
-    if (deudorCheckController) deudorCheckController.abort();
-    deudorCheckController = new AbortController();
+// ─── success modal ────────────────────────────────────────────────────────────
+// Mirrors script_2.js Swal.fire in handleStudentDataDisplay (else branch).
+// Auto-closes after 1600 ms for continuous scanning; restart is armed via .then().
+const _showSuccessModal = (studentInfo) => {
+    const { fullnameP, fotoP, fullnameA, nivelEduA, gradoA, grupoA, fotoA, parentesco, plantel } = studentInfo;
+
+    const colors = {
+        guardería: '#8EC152', preescolar: '#E94B4D',
+        primaria: '#FDC53D', secundaria: '#5AA6DC', preparatoria: '#514F9D'
+    };
+    const color = colors[String(nivelEduA || '').toLowerCase()] || '#8EC152';
+
+    // Fire-and-forget: the .then() arms the restart poller.
+    void Swal.fire({
+        icon: 'success',
+        title: 'Escaneo exitoso',
+        html: `
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
+              <div style="background-color:${color};border-radius:999px;padding:4px 20px;margin-bottom:12px;display:inline-flex;align-items:center;">
+                <span style="color:#fff;font-weight:bold;text-transform:uppercase;">${nivelEduA}</span>
+              </div>
+              <div style="background:#585858;color:#fff;width:100%;border-radius:6px;padding:8px 12px;margin-bottom:12px;text-align:center;">
+                <p style="margin:0;font-size:1rem;font-weight:bold;">${fullnameA}</p>
+                <small>${gradoA} ${grupoA}</small>
+              </div>
+              <p style="margin-top:8px;margin-bottom:4px;">Persona autorizada:<br><strong>${fullnameP}</strong></p>
+              <small>(${parentesco})</small>
+              <div style="display:flex;justify-content:center;gap:12px;margin-top:12px;">
+                <img src="${fotoA || 'https://via.placeholder.com/150?text=No+Image'}"
+                     alt="${fullnameA}"
+                     style="width:120px;height:120px;object-fit:cover;border-radius:4px;"
+                     onerror="this.src='https://via.placeholder.com/150?text=No+Image'">
+                <img src="${fotoP || 'https://via.placeholder.com/150?text=No+Image'}"
+                     alt="${fullnameP}"
+                     style="width:120px;height:120px;object-fit:cover;border-radius:4px;"
+                     onerror="this.src='https://via.placeholder.com/150?text=No+Image'">
+              </div>
+            </div>
+        `,
+        showConfirmButton: false,
+        timer: 1600,
+        timerProgressBar: true,
+        customClass: 'my-swal'
+    }).then(() => {
+        restartScannerWhenNoSwal();
+    });
+
+    // Send Telegram/WhatsApp notification – fire-and-forget.
+    // Matches script_2.js: sendMessage called for all types except 'entrada'.
+    if (scanType.value !== 'entrada') {
+        void _sendMessage(fullnameA, fullnameP, gradoA, grupoA, plantel, nivelEduA, selectedDoor.value);
+    }
+};
+
+// ─── deudor toast ─────────────────────────────────────────────────────────────
+// Non-blocking; mirrors script_2.js checkDeudorAndToast.
+let _deudorController = null;
+
+const _checkDeudorAndToast = async (matricula) => {
+    try { if (_deudorController) _deudorController.abort(); } catch (_) {}
+    _deudorController = new AbortController();
 
     try {
-        const isDeudor = await checkDeudor(matricula, deudorCheckController.signal);
-        if (isDeudor && !Swal.isVisible()) {
+        const isDeudor = await checkDeudor(matricula, _deudorController.signal);
+        if (isDeudor === true && !Swal.isVisible()) {
             Swal.fire({
                 toast: true,
                 position: 'top-end',
@@ -409,20 +520,24 @@ const checkDeudorAndToast = async (matricula) => {
                 showConfirmButton: false,
                 timer: 2200,
                 timerProgressBar: true,
-                backdrop: false
+                backdrop: false,
+                allowOutsideClick: true,
+                allowEscapeKey: true
             });
         }
     } catch (e) {
-        if (e?.name !== 'AbortError') console.warn(e);
+        if (e?.name !== 'AbortError') console.warn('deudor check failed:', e);
     }
 };
 
-const handleRetardosFlow = async (studentWithTardy, nivelEduA, gradoA, grupoA, matricula, plantel) => {
+// ─── retardos flow ────────────────────────────────────────────────────────────
+const _handleRetardosFlow = async (studentWithTardy, nivelEduA, gradoA, grupoA, matricula, plantel) => {
     const res = await Swal.fire({
-        title: `El alumno ${studentWithTardy.student_fullname} tiene ${studentWithTardy.TardyCount} retardos.`,
+        title: `El alumno ${studentWithTardy.student_fullname} tiene ${studentWithTardy.TardyCount} retardos. ¿Qué acción desea tomar?`,
         showCancelButton: true,
+        showDenyButton: true,
         confirmButtonText: 'Ver retardos',
-        cancelButtonText: 'Cancelar'
+        denyButtonText: 'Cancelar'
     });
 
     if (!res.isConfirmed) {
@@ -441,10 +556,10 @@ const handleRetardosFlow = async (studentWithTardy, nivelEduA, gradoA, grupoA, m
         tableHtml += '</tbody></table>';
 
         const suspendRes = await Swal.fire({
-            title: 'Detalles de Retardos',
+            title: 'Detalles de los retardos',
             html: tableHtml,
-            showCancelButton: true,
-            confirmButtonText: 'Suspender'
+            confirmButtonText: 'Continuar para suspender',
+            showCancelButton: true
         });
 
         if (suspendRes.isConfirmed) {
@@ -456,88 +571,65 @@ const handleRetardosFlow = async (studentWithTardy, nivelEduA, gradoA, grupoA, m
             });
         }
     } catch (e) {
-        Swal.fire('Error', 'No se pudieron obtener detalles', 'error');
+        Swal.fire('Error', 'No se pudieron obtener los detalles de los retardos.', 'error');
     }
 
     restartScannerWhenNoSwal();
 };
 
-const showSuccessFlow = async (studentInfo) => {
-    const { fullnameP, fotoP, fullnameA, nivelEduA, gradoA, grupoA, fotoA, parentesco, plantel } = studentInfo;
-    const colors = { preescolar: '#E94B4D', primaria: '#FDC53D', secundaria: '#5AA6DC', preparatoria: '#514F9D' };
-    const color = colors[String(nivelEduA || '').toLowerCase()] || '#8EC152';
+// ─── label overlay ────────────────────────────────────────────────────────────
+const _showLabel = (text) => {
+    processingLabel.value = text;
+    setTimeout(() => { processingLabel.value = ''; }, 3000);
+};
 
-    void Swal.fire({
-        icon: 'success',
-        title: 'Escaneo exitoso',
-        html: `
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
-              <div style="background-color:${color};border-radius:999px;padding:4px 20px;margin-bottom:12px;display:inline-flex;align-items:center;">
-                <span style="color:#fff;font-weight:bold;text-transform:uppercase;">${nivelEduA}</span>
-              </div>
-              <div style="background:#585858;color:#fff;width:100%;border-radius:6px;padding:8px 12px;margin-bottom:12px;text-align:center;">
-                <p style="margin:0;font-size:1rem;font-weight:bold;">${fullnameA}</p>
-                <small>${gradoA} ${grupoA}</small>
-              </div>
-              <p style="margin-top:8px;margin-bottom:4px;">Persona autorizada:<br><strong>${fullnameP}</strong></p>
-              <small>(${parentesco})</small>
-              <div style="display:flex;justify-content:center;gap:12px;margin-top:12px;">
-                <img src="${fotoA || 'https://via.placeholder.com/150?text=No+Image'}" alt="${fullnameA}" style="width:120px;height:120px;object-fit:cover;border-radius:4px;">
-                <img src="${fotoP || 'https://via.placeholder.com/150?text=No+Image'}" alt="${fullnameP}" style="width:120px;height:120px;object-fit:cover;border-radius:4px;">
-              </div>
-            </div>
-        `,
-        showConfirmButton: false,
-        timer: 1600,
-        timerProgressBar: true,
-        customClass: 'my-swal'
-    }).then(() => {
-        restartScannerWhenNoSwal();
-    });
+// ─── Telegram / WhatsApp notification ────────────────────────────────────────
+// Mirrors script_2.js sendMessage / getChatId / routeOutbound.
+const _sendMessage = async (fullnameA, fullnameP, grado, grupo, plantel, nivel, puerta) => {
+    try {
+        const matchedRules = getMatchedRules(plantel, nivel, grado);
+        if (!matchedRules || matchedRules.length === 0) return;
 
-    if (scanType.value !== 'entrada') {
-        void sendMessage(fullnameA, fullnameP, gradoA, grupoA, plantel, nivelEduA, selectedDoor.value);
+        const emojiNumbers = { 0: '', 1: '1️⃣', 2: '2️⃣', 3: '3️⃣', 4: '4️⃣' };
+        const puertaEmoji = emojiNumbers[puerta] || '';
+        const puertaText  = puerta === 3 ? ' **POR CARRUSEL**' : (puerta === 4 ? ' **PEATONAL**' : '');
+
+        const uniquePayloads = new Map();
+
+        matchedRules.forEach(rule => {
+            const template = (rule.template && rule.template.trim() !== '')
+                ? rule.template
+                : appConfig.templates?.default || '**{fullnameA}** {grado} {grupo} {puertaEmoji}🚪{puertaText}';
+
+            const msg = template
+                .replace(/{fullnameP}/g, fullnameP)
+                .replace(/{fullnameA}/g, fullnameA)
+                .replace(/{grado}/g, grado)
+                .replace(/{grupo}/g, grupo)
+                .replace(/{plantel}/g, plantel)
+                .replace(/{nivel}/g, nivel)
+                .replace(/{puertaEmoji}/g, puertaEmoji)
+                .replace(/{puertaText}/g, puertaText);
+
+            uniquePayloads.set(String(rule.chatId), { message: msg });
+        });
+
+        uniquePayloads.forEach(({ message }, chatId) => {
+            const id = String(chatId ?? '').trim();
+            if (!id) return;
+            const payload = { chatId: [id], message };
+            if (/@g\.us$/i.test(id)) {
+                void sendWhatsAppMessage(payload).catch(console.error);
+            } else {
+                void sendTelegramMessage(payload).catch(console.error);
+            }
+        });
+    } catch (err) {
+        console.error('sendMessage error:', err);
     }
 };
 
-const sendMessage = async (fullnameA, fullnameP, grado, grupo, plantel, nivel, puerta) => {
-    const matchedRules = getMatchedRules(plantel, nivel, grado);
-    if (matchedRules.length === 0) return;
-
-    const emojiNumbers = { 0: '', 1: '1️⃣', 2: '2️⃣', 3: '3️⃣', 4: '4️⃣' };
-    const puertaText = puerta === 3 ? ' **POR CARRUSEL**' : (puerta === 4 ? ' **PEATONAL**' : '');
-
-    const uniquePayloads = new Map();
-
-    matchedRules.forEach(rule => {
-        const template = (rule.template && rule.template.trim() !== '') ? rule.template : appConfig.templates.default;
-
-        const msg = template
-            .replace(/{fullnameP}/g, fullnameP)
-            .replace(/{fullnameA}/g, fullnameA)
-            .replace(/{grado}/g, grado)
-            .replace(/{grupo}/g, grupo)
-            .replace(/{plantel}/g, plantel)
-            .replace(/{nivel}/g, nivel)
-            .replace(/{puertaEmoji}/g, emojiNumbers[puerta] || '')
-            .replace(/{puertaText}/g, puertaText);
-
-        uniquePayloads.set(String(rule.chatId), { message: msg });
-    });
-
-    uniquePayloads.forEach(({ message }, chatId) => {
-        const normalizedChatId = String(chatId ?? '').trim();
-        if (!normalizedChatId) return;
-
-        const payload = { chatId: [normalizedChatId], message };
-        if (/@g\.us$/i.test(normalizedChatId)) {
-            void sendWhatsAppMessage(payload).catch(console.error);
-        } else {
-            void sendTelegramMessage(payload).catch(console.error);
-        }
-    });
-};
-
+// ─── manual matricula entry ───────────────────────────────────────────────────
 const promptMatricula = async () => {
     if (scannerInstance) scannerInstance.pause();
 
@@ -546,7 +638,7 @@ const promptMatricula = async () => {
         input: 'text',
         inputAttributes: { maxlength: 6 },
         showCancelButton: true,
-        confirmButtonText: 'Buscar'
+        confirmButtonText: `Enviar ${scanType.value}`
     });
 
     if (matricula && matricula.length === 6) {
@@ -554,26 +646,28 @@ const promptMatricula = async () => {
         if (personas.length > 0) {
             const htmlContent = personas.map(p => `
               <div class="m-2 text-center p-2 border rounded cursor-pointer hover:bg-gray-100" id="btn-manual-${p.persona_id}">
-                <img src="${p.fotoP}" class="w-16 h-16 rounded-full mx-auto" />
+                <img src="${p.fotoP}" class="w-16 h-16 rounded-full mx-auto"
+                     onerror="this.src='https://via.placeholder.com/64?text=?'" />
                 <p class="text-xs font-bold mt-1">${p.fullnameP}</p>
               </div>
             `).join('');
 
             Swal.fire({
-                title: 'Seleccione Persona Autorizada',
-                html: `<div class="grid grid-cols-2 gap-2">${htmlContent}</div>`,
+                title: 'Seleccione una persona autorizada',
+                html: `<div style="display:flex;flex-wrap:wrap;justify-content:center;">${htmlContent}</div>`,
                 showConfirmButton: false,
                 didRender: () => {
                     personas.forEach(p => {
                         document.getElementById(`btn-manual-${p.persona_id}`)?.addEventListener('click', () => {
                             Swal.close();
-                            void processSingleId(p.persona_id);
+                            void _sendAjaxRequest(p.persona_id);
                         });
                     });
                 }
-            }).then(restartScannerWhenNoSwal);
+            }).then(() => restartScannerWhenNoSwal());
         } else {
-            Swal.fire('Error', 'No se encontraron personas autorizadas.', 'error').then(restartScannerWhenNoSwal);
+            Swal.fire('No se encontraron personas autorizadas para esta matrícula.')
+                .then(() => restartScannerWhenNoSwal());
         }
     } else {
         restartScannerWhenNoSwal();
