@@ -86,6 +86,7 @@ import {
     sendWhatsAppMessage, sendTelegramMessage
 } from '../services/api';
 import { getMatchedRules, appConfig } from '../services/configManager';
+import { evaluateTelegramRuleDelivery } from '../services/deliveryRules';
 
 const emit = defineEmits(['openSettings']);
 
@@ -210,16 +211,11 @@ const selectDoor = (index) => {
 };
 
 // ─── scanner lifecycle ────────────────────────────────────────────────────────
-// Mirrors script_2.js startScanner: always builds a fresh QrScanner instance,
-// resets duplicate-guards, and starts with retry logic.
-
 const startScanner = (type) => {
     scanType.value   = type;
     isScanning.value = true;
     noSleep.enable();
 
-    // Clear duplicate-scan guards for the new session (same as a fresh page load
-    // in script_2.js where the sets start empty on every button click).
     processedIds.clear();
     processedMatriculas.clear();
     scanQueue.clear();
@@ -227,9 +223,6 @@ const startScanner = (type) => {
 
     _clearRestartPoller();
 
-    // Destroy any existing instance before creating a new one.
-    // This guarantees a fresh camera stream and avoids black-screen issues
-    // caused by stale internal state in the previous QrScanner.
     if (scannerInstance) {
         try { scannerInstance.destroy(); } catch (_) {}
         scannerInstance = null;
@@ -241,7 +234,6 @@ const startScanner = (type) => {
         maxScansPerSecond: 2
     });
 
-    // Start with retry – mirrors script_2.js startScannerWithRetry
     _startWithRetry(scannerInstance, 5);
 };
 
@@ -252,14 +244,11 @@ const stopScanner = () => {
 
     if (scannerInstance) {
         try { scannerInstance.stop(); } catch (_) {}
-        // Do NOT destroy here; the user may press Entrada/Salida again quickly.
     }
 
     noSleep.disable();
 };
 
-// Internal: start with up to maxAttempts retries, 1 s apart.
-// Mirrors script_2.js startScannerWithRetry.
 const _startWithRetry = (instance, maxAttempts, attempt = 1) => {
     if (!instance || !isScanning.value) return;
 
@@ -279,7 +268,6 @@ const _startWithRetry = (instance, maxAttempts, attempt = 1) => {
         });
 };
 
-// Internal: clear the restart poller.
 const _clearRestartPoller = () => {
     if (restartIntervalId) {
         clearInterval(restartIntervalId);
@@ -287,11 +275,7 @@ const _clearRestartPoller = () => {
     }
 };
 
-// Mirrors script_2.js restartScannerWhenNoSwal:
-// Poll every 1 s; when no Swal is visible, call scanner.start().
-// Called unconditionally after every scan (both normal and duplicate paths).
 const restartScannerWhenNoSwal = () => {
-    // Allow a new poller even if one was already running (arm/re-arm).
     _clearRestartPoller();
 
     restartIntervalId = setInterval(() => {
@@ -300,7 +284,7 @@ const restartScannerWhenNoSwal = () => {
             return;
         }
 
-        if (Swal.isVisible()) return; // wait until modal is gone
+        if (Swal.isVisible()) return;
 
         _clearRestartPoller();
         scannerInstance.start().catch(err => {
@@ -310,7 +294,6 @@ const restartScannerWhenNoSwal = () => {
 };
 
 // ─── scan throttle ────────────────────────────────────────────────────────────
-// Mirrors script_2.js throttle(scanSuccess, 2000).
 const _throttledScanSuccess = (result) => {
     if (inThrottle) return;
     inThrottle = true;
@@ -319,11 +302,9 @@ const _throttledScanSuccess = (result) => {
 };
 
 // ─── scan success handler ─────────────────────────────────────────────────────
-// Mirrors script_2.js scanSuccess exactly.
 const _scanSuccess = (result) => {
     const [, , baseURL, route, id = ''] = result.data.split('/');
 
-    // Already processed – show label and bail (scanner stays running).
     if (processedIds.has(id)) {
         _showLabel(navigator.onLine ? '¡Listo!' : 'Sin conectividad, acércate al Router');
         return;
@@ -333,11 +314,9 @@ const _scanSuccess = (result) => {
         processedIds.add(id);
     } else {
         _showLabel('Sin conectividad, acércate al Router');
-        // Do not proceed when offline (matches original behaviour).
         return;
     }
 
-    // Pause scanner while we process.
     scannerInstance.pause();
 
     if (!id) {
@@ -359,19 +338,15 @@ const _scanSuccess = (result) => {
         return;
     }
 
-    // Enqueue and process.
     if (!scanQueue.has(id)) {
         scanQueue.add(id);
         _processScanQueue();
     }
 
-    // Arm restart poller immediately (matches script_2.js calling
-    // restartScannerWhenNoSwal right after processScanQueue).
     restartScannerWhenNoSwal();
 };
 
 // ─── queue processing ─────────────────────────────────────────────────────────
-// Mirrors script_2.js processScanQueue / sendAjaxRequest.
 const _processScanQueue = async () => {
     for (const id of [...scanQueue]) {
         scanQueue.delete(id);
@@ -385,12 +360,8 @@ const _sendAjaxRequest = async (id) => {
 
         if (!data || !data[0]) throw new Error('Data no válida');
 
-        // MUST await – not fire-and-forget.
-        // Using `void` here silently swallowed any TypeError thrown when
-        // destructuring data[0] fields, causing the black-flash / no-modal bug.
         await _handleStudentDataDisplay(data);
 
-        // Insert record in the background (fire-and-forget).
         void fallbackInsertScan({
             data: [{ ss_id: id, type: scanType.value, puerta: selectedDoor.value }],
             table: 'acceso'
@@ -405,7 +376,6 @@ const _sendAjaxRequest = async (id) => {
                 text: 'Su QR fue anulado, hay que volverlo a generar desde la plataforma e imprimirlo nuevamente.'
             });
         } else {
-            // Always show something visible – never fail silently.
             await Swal.fire({
                 icon: 'error',
                 title: 'Error al procesar escaneo',
@@ -420,20 +390,16 @@ const _sendAjaxRequest = async (id) => {
 };
 
 // ─── student data display ─────────────────────────────────────────────────────
-// Mirrors script_2.js handleStudentDataDisplay.
 const _handleStudentDataDisplay = async (data) => {
     const { matricula, nivelEduA, gradoA, grupoA, plantel } = data[0];
 
-    // Duplicate-matricula guard – but ALWAYS ensure scanner can restart.
     if (processedMatriculas.has(matricula)) {
         console.log(`Matricula ${matricula} already processed.`);
-        // Must restart the scanner here; without this the scanner stays paused.
         restartScannerWhenNoSwal();
         return;
     }
     processedMatriculas.add(matricula);
 
-    // Deudor check – fire-and-forget, never blocks scan flow.
     if (scanType.value === 'entrada') {
         void _checkDeudorAndToast(matricula);
     }
@@ -452,8 +418,6 @@ const _handleStudentDataDisplay = async (data) => {
 };
 
 // ─── success modal ────────────────────────────────────────────────────────────
-// Opens immediately with spinner placeholders, then swaps in real photos as
-// they arrive inside the already-open modal — no waiting before display.
 const PHOTO_MODAL_TIMER_MS = 3000;
 const PHOTO_PLACEHOLDER    = 'https://via.placeholder.com/150?text=Sin+foto';
 
@@ -475,7 +439,6 @@ const _showSuccessModal = (studentInfo) => {
     };
     const color = colors[String(nivelEduA || '').toLowerCase()] || '#8EC152';
 
-    // Spinner SVG used as placeholder while real photo loads.
     const spinner = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 50 50'%3E%3Ccircle cx='25' cy='25' r='20' fill='%23eee'/%3E%3Cpath d='M25 5a20 20 0 0 1 0 40' stroke='%23aaa' stroke-width='4' fill='none'%3E%3CanimateTransform attributeName='transform' type='rotate' from='0 25 25' to='360 25 25' dur='0.8s' repeatCount='indefinite'/%3E%3C/path%3E%3C/svg%3E`;
 
     void Swal.fire({
@@ -508,15 +471,13 @@ const _showSuccessModal = (studentInfo) => {
             _loadIntoImg(document.getElementById('swal-foto-alumno'), fotoA);
             _loadIntoImg(document.getElementById('swal-foto-persona'), fotoP);
 
-            // Close immediately on any touch — no need to wait for the timer.
             Swal.getPopup()?.addEventListener('touchstart', () => Swal.close(), { once: true, passive: true });
         }
     }).then(() => {
-        // Start scanner right away — don't wait for the poller's 1s tick.
         if (scannerInstance && isScanning.value) {
             scannerInstance.start().catch(() => {});
         }
-        restartScannerWhenNoSwal(); // safety net if start() fails
+        restartScannerWhenNoSwal();
     });
 
     if (scanType.value !== 'entrada') {
@@ -525,7 +486,6 @@ const _showSuccessModal = (studentInfo) => {
 };
 
 // ─── deudor toast ─────────────────────────────────────────────────────────────
-// Non-blocking; mirrors script_2.js checkDeudorAndToast.
 let _deudorController = null;
 
 const _checkDeudorAndToast = async (matricula) => {
@@ -607,9 +567,6 @@ const _showLabel = (text) => {
 };
 
 // ─── Telegram / WhatsApp notification ────────────────────────────────────────
-// Mirrors script_2.js sendMessage exactly.
-// script_2.js: sendMessage(fullnameA, gradoA, grupoA, plantel, nivelEduA, puertaValue)
-// The parent name (fullnameP) is never passed — only student info goes in the notification.
 const _sendMessage = async (fullnameA, grado, grupo, plantel, nivel, puerta) => {
     try {
         const matchedRules = getMatchedRules(plantel, nivel, grado);
@@ -635,17 +592,29 @@ const _sendMessage = async (fullnameA, grado, grupo, plantel, nivel, puerta) => 
                 .replace(/{puertaEmoji}/g, puertaEmoji)
                 .replace(/{puertaText}/g, puertaText);
 
-            uniquePayloads.set(String(rule.chatId), { message: msg });
+            // Store the full rule alongside the message so we can apply
+            // delivery rules (e.g. time-based gating) when sending.
+            uniquePayloads.set(String(rule.chatId), { message: msg, rule });
         });
 
-        uniquePayloads.forEach(({ message }, chatId) => {
+        uniquePayloads.forEach(({ message, rule }, chatId) => {
             const id = String(chatId ?? '').trim();
             if (!id) return;
             const payload = { chatId: [id], message };
             if (/@g\.us$/i.test(id)) {
+                // WhatsApp — always send immediately; time-based rules only apply to Telegram.
                 void sendWhatsAppMessage(payload).catch(console.error);
             } else {
-                void sendTelegramMessage(payload).catch(console.error);
+                // Telegram — evaluate delivery rules before sending.
+                const delivery = evaluateTelegramRuleDelivery(rule);
+                if (delivery.shouldSend) {
+                    void sendTelegramMessage(payload).catch(console.error);
+                } else {
+                    console.log(
+                        `[Telegram] Skipped chatId ${id} — before threshold ${delivery.threshold}` +
+                        ` (now ${delivery.currentMinutes} min, need ${delivery.thresholdMinutes} min)`
+                    );
+                }
             }
         });
     } catch (err) {
