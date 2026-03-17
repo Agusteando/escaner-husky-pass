@@ -98,7 +98,6 @@ const processingLabel = ref('');
 
 // ─── scanner state ────────────────────────────────────────────────────────────
 // One instance per session; destroyed and recreated on each startScanner call
-// (mirrors how script_2.js calls `new QrScanner(...)` inside startScanner).
 let scannerInstance = null;
 const noSleep = new NoSleep();
 
@@ -107,7 +106,7 @@ let processedIds       = new Set();
 let processedMatriculas = new Set();
 let scanQueue          = new Set();
 
-// Throttle flag – mirrors script_2.js's throttle(scanSuccess, 2000)
+// Throttle flag
 let inThrottle = false;
 
 // Restart poller handle
@@ -481,7 +480,7 @@ const _showSuccessModal = (studentInfo) => {
     });
 
     if (scanType.value !== 'entrada') {
-        void _sendMessage(fullnameA, gradoA, grupoA, plantel, nivelEduA, selectedDoor.value);
+        void _sendMessage(fullnameA, fullnameP, gradoA, grupoA, plantel, nivelEduA, selectedDoor.value);
     }
 };
 
@@ -567,7 +566,7 @@ const _showLabel = (text) => {
 };
 
 // ─── Telegram / WhatsApp notification ────────────────────────────────────────
-const _sendMessage = async (fullnameA, grado, grupo, plantel, nivel, puerta) => {
+const _sendMessage = async (fullnameA, fullnameP, grado, grupo, plantel, nivel, puerta) => {
     try {
         const matchedRules = getMatchedRules(plantel, nivel, grado);
         if (!matchedRules || matchedRules.length === 0) return;
@@ -585,6 +584,8 @@ const _sendMessage = async (fullnameA, grado, grupo, plantel, nivel, puerta) => 
 
             const msg = template
                 .replace(/{fullnameA}/g, fullnameA)
+                .replace(/{fullnameP}/g, fullnameA) // fallback para configuraciones previas (ahora da el nombre del alumno)
+                .replace(/{personaAutorizada}/g, fullnameP) // variable para el nombre del tutor si lo requieren
                 .replace(/{grado}/g, grado)
                 .replace(/{grupo}/g, grupo)
                 .replace(/{plantel}/g, plantel)

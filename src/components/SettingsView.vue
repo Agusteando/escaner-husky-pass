@@ -22,8 +22,8 @@
         <section>
           <h3 class="font-display text-lg text-husky-gray mb-3 border-b pb-2">Plantilla Global por Defecto</h3>
           <p class="text-xs text-gray-500 mb-2">Variables disponibles: <br />
-            <span class="text-husky-purple font-mono cursor-pointer hover:underline" @click="insertVar('{fullnameP}', null)">{fullnameP}</span>,
-            <span class="text-husky-purple font-mono cursor-pointer hover:underline" @click="insertVar('{fullnameA}', null)">{fullnameA}</span>,
+            <span class="text-husky-purple font-mono cursor-pointer hover:underline" @click="insertVar('{fullnameA}', null)">{fullnameA}</span> (Alumno),
+            <span class="text-husky-purple font-mono cursor-pointer hover:underline" @click="insertVar('{personaAutorizada}', null)">{personaAutorizada}</span> (Tutor),
             <span class="text-husky-purple font-mono cursor-pointer hover:underline" @click="insertVar('{plantel}', null)">{plantel}</span>,
             <span class="text-husky-purple font-mono cursor-pointer hover:underline" @click="insertVar('{grado}', null)">{grado}</span>,
             <span class="text-husky-purple font-mono cursor-pointer hover:underline" @click="insertVar('{grupo}', null)">{grupo}</span>,
@@ -71,7 +71,7 @@
                 <textarea v-model="rule.template" :ref="(el) => templateRefs[index] = el" class="w-full p-2 border rounded bg-white outline-none focus:border-husky-blue text-sm font-medium resize-none" rows="2" placeholder="Plantilla individual para este grupo..."></textarea>
                 <div class="text-right mt-1">
                   <span class="text-xs text-husky-purple font-mono cursor-pointer hover:underline mr-2" @click="insertVar('{plantel}', index)">+{plantel}</span>
-                  <span class="text-xs text-husky-purple font-mono cursor-pointer hover:underline mr-2" @click="insertVar('{fullnameP}', index)">+{fullnameP}</span>
+                  <span class="text-xs text-husky-purple font-mono cursor-pointer hover:underline mr-2" @click="insertVar('{fullnameA}', index)">+{fullnameA}</span>
                   <span class="text-xs text-husky-purple font-mono cursor-pointer hover:underline" @click="insertVar('{puertaEmoji}', index)">+{puertaEmoji}</span>
                 </div>
               </div>
