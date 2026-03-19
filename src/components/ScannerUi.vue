@@ -90,6 +90,12 @@ import { evaluateTelegramRuleDelivery } from '../services/deliveryRules';
 
 const emit = defineEmits(['openSettings']);
 
+// ─── env flags ────────────────────────────────────────────────────────────────
+// Variables para encender o apagar deudores y retardos. Por defecto siempre encendido
+// a menos que en el entorno se defina explícitamente "false".
+const ENABLE_DEUDORES = import.meta.env.VITE_ENABLE_DEUDORES !== 'false';
+const ENABLE_RETARDOS = import.meta.env.VITE_ENABLE_RETARDOS !== 'false';
+
 // ─── refs ────────────────────────────────────────────────────────────────────
 const isScanning = ref(false);
 const scanType   = ref('');
@@ -151,7 +157,9 @@ onMounted(() => {
     const puertaCookie = cookies.find(c => c.startsWith('puerta='));
     if (puertaCookie) selectedDoor.value = parseInt(puertaCookie.split('=')[1], 10) || 0;
 
-    fetchTardosData().then(data => { conRetardos = data; }).catch(console.error);
+    if (ENABLE_RETARDOS) {
+        fetchTardosData().then(data => { conRetardos = data; }).catch(console.error);
+    }
 });
 
 onUnmounted(() => {
@@ -399,7 +407,7 @@ const _handleStudentDataDisplay = async (data) => {
     }
     processedMatriculas.add(matricula);
 
-    if (scanType.value === 'entrada') {
+    if (scanType.value === 'entrada' && ENABLE_DEUDORES) {
         void _checkDeudorAndToast(matricula);
     }
 
@@ -409,7 +417,7 @@ const _handleStudentDataDisplay = async (data) => {
     const isPrimaria  = level === 'primaria'   && (now.getHours() > 8 || (now.getHours() === 8 && now.getMinutes() >= 0));
     const isSecundaria = level === 'secundaria' && now.getHours() >= 7;
 
-    if ((isPrimaria || isSecundaria) && studentWithTardy && scanType.value === 'entrada') {
+    if (ENABLE_RETARDOS && (isPrimaria || isSecundaria) && studentWithTardy && scanType.value === 'entrada') {
         await _handleRetardosFlow(studentWithTardy, nivelEduA, gradoA, grupoA, matricula, plantel);
     } else {
         _showSuccessModal(data[0]);
