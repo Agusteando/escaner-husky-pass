@@ -1,6 +1,5 @@
 import { reactive } from 'vue';
 
-const STATE_KEY = 'husky_pass_settings';
 const DEFAULT_TEMPLATE = '**{fullnameA}** {grado} {grupo} {puertaEmoji}🚪{puertaText}';
 export const DEFAULT_TELEGRAM_THRESHOLD = '15:30';
 
@@ -141,47 +140,45 @@ export const validateConfig = (config = {}) => {
 };
 
 export const loadConfig = async () => {
-    // 1. Try to fetch the global synchronized config from Redis
+    let loadedFromRedis = false;
+
+    // 1. Always attempt to load the global synchronized config from Redis
     try {
         const response = await fetch('/api/config', { cache: 'no-store' });
         if (response.ok) {
             const data = await response.json();
-            if (data && Object.keys(data).length > 0) {
+            if (data && Object.keys(data).length > 0 && data.rules && data.rules.length > 0) {
                 const normalized = normalizeConfig(data);
-                // Reactivity updates the UI automatically
                 Object.assign(appConfig, normalized);
-                localStorage.setItem(STATE_KEY, JSON.stringify(normalized)); // Backup locally
+                loadedFromRedis = true;
                 return appConfig;
             }
         }
     } catch (e) {
-        console.warn('API sync failed. Falling back to local offline storage...', e);
+        console.warn('API sync failed. Retrying fallback to public/config.json', e);
     }
 
-    // 2. Fallback to LocalStorage if offline or Vercel Edge fails
-    const saved = localStorage.getItem(STATE_KEY);
-    if (saved) {
+    // 2. Safely Fallback to static JSON file if Redis is missing, errors out, or is empty
+    if (!loadedFromRedis) {
         try {
-            const parsed = JSON.parse(saved);
-            Object.assign(appConfig, normalizeConfig(parsed));
-            return appConfig;
+            const response = await fetch('/config.json', { cache: 'no-store' });
+            if (response.ok) {
+                const data = await response.json();
+                const normalized = normalizeConfig(data);
+                Object.assign(appConfig, normalized);
+                
+                // Fire and forget upload to seed the database if it was just empty
+                fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(normalized)
+                }).catch(() => {});
+                
+                return appConfig;
+            }
         } catch (e) {
-            localStorage.removeItem(STATE_KEY);
+            console.error('Failed to load fallback config.json', e);
         }
-    }
-
-    // 3. Absolute default from static JSON config file
-    try {
-        const response = await fetch('/config.json', { cache: 'no-store' });
-        if (response.ok) {
-            const data = await response.json();
-            const normalized = normalizeConfig(data);
-            Object.assign(appConfig, normalized);
-            localStorage.setItem(STATE_KEY, JSON.stringify(normalized));
-            return appConfig;
-        }
-    } catch (e) {
-        console.error('Failed to load default config', e);
     }
 
     return appConfig;
@@ -190,22 +187,20 @@ export const loadConfig = async () => {
 export const saveConfig = async (config = appConfig) => {
     const normalizedConfig = normalizeConfig(config);
 
-    // Save globally first
-    try {
-        const response = await fetch('/api/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(normalizedConfig)
-        });
-        if (!response.ok) throw new Error('No se pudo guardar la configuración en la base de datos (Redis).');
-    } catch (e) {
-        console.error(e.message);
-        throw e; // Pass to the component to show a warning
+    // Strict Global Save. If Redis is down, we deny the save and warn the user.
+    const response = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(normalizedConfig)
+    });
+    
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'No se pudo guardar la configuración global en Redis.');
     }
 
-    // Apply locally
+    // Update memory instantly upon success
     Object.assign(appConfig, normalizedConfig);
-    localStorage.setItem(STATE_KEY, JSON.stringify(normalizedConfig));
     return normalizedConfig;
 };
 
@@ -218,7 +213,6 @@ export const startConfigSync = () => {
     });
 
     // 2. Passive Polling: every 2 minutes (120,000 ms). 
-    // This is low enough to prevent budget limits from maxing out, but fast enough for automated syncing.
     setInterval(() => {
         if (navigator.onLine) {
             loadConfig();

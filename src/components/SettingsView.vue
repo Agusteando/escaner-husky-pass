@@ -166,7 +166,7 @@
       <div class="p-4 border-t bg-gray-50 flex gap-3">
         <button @click="saveChanges" :disabled="isSaving" class="flex-1 bg-husky-blue text-white py-3 rounded-lg font-display text-lg shadow hover:bg-blue-600 transition disabled:opacity-75 disabled:cursor-not-allowed flex items-center justify-center">
           <i v-if="isSaving" class="fas fa-spinner fa-spin mr-2"></i>
-          {{ isSaving ? 'Guardando y Sincronizando...' : 'Guardar Cambios' }}
+          {{ isSaving ? 'Guardando...' : 'Guardar Cambios' }}
         </button>
       </div>
     </div>
@@ -304,21 +304,20 @@ const saveChanges = async () => {
         
         Swal.fire({
             icon: 'success',
-            title: 'Guardado y Sincronizado',
-            text: 'La configuración se actualizó globalmente en todos los escáneres',
+            title: 'Sincronizado',
+            text: 'Configuración guardada y replicada a todos los clientes.',
             timer: 2000,
             showConfirmButton: false
         });
 
         emit('close');
     } catch (error) {
-        // Safe Fallback - The JSON still saves to Local Storage
+        // Strict Error: Deny the save entirely if global sync fails.
         Swal.fire({
-            icon: 'warning',
-            title: 'Configuración Parcial',
-            text: 'Se guardó en este dispositivo, pero falló la sincronización global. ¿Están configuradas las variables de Redis en Vercel?',
+            icon: 'error',
+            title: 'Error de Sincronización',
+            text: error.message || 'No se pudo guardar globalmente.',
         });
-        localConfig.value = normalizedConfig;
     } finally {
         isSaving.value = false;
     }
