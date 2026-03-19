@@ -23,7 +23,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import ScannerUi from './components/ScannerUi.vue';
 import SettingsView from './components/SettingsView.vue';
-import { loadConfig } from './services/configManager';
+import { loadConfig, startConfigSync } from './services/configManager';
 
 const isOnline = ref(navigator.onLine);
 const showSettings = ref(false);
@@ -54,7 +54,9 @@ onMounted(async () => {
     window.addEventListener('online', updateOnlineStatus);
     window.addEventListener('offline', updateOnlineStatus);
     window.addEventListener('data-usage-updated', handleDataUsage);
+    
     await loadConfig();
+    startConfigSync(); // Start global background syncing across all clients
 });
 
 onUnmounted(() => {

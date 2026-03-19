@@ -164,8 +164,9 @@
       </div>
 
       <div class="p-4 border-t bg-gray-50 flex gap-3">
-        <button @click="saveChanges" class="flex-1 bg-husky-blue text-white py-3 rounded-lg font-display text-lg shadow hover:bg-blue-600 transition">
-          Guardar Cambios
+        <button @click="saveChanges" :disabled="isSaving" class="flex-1 bg-husky-blue text-white py-3 rounded-lg font-display text-lg shadow hover:bg-blue-600 transition disabled:opacity-75 disabled:cursor-not-allowed flex items-center justify-center">
+          <i v-if="isSaving" class="fas fa-spinner fa-spin mr-2"></i>
+          {{ isSaving ? 'Guardando...' : 'Guardar Cambios' }}
         </button>
       </div>
     </div>
@@ -192,6 +193,7 @@ const localConfig = ref(normalizeConfig(appConfig));
 const defaultTemplateInput = ref(null);
 const templateRefs = ref({});
 const deviceTimeZoneLabel = getDeviceTimeZoneLabel();
+const isSaving = ref(false);
 
 onMounted(() => {
     localConfig.value = normalizeConfig(appConfig);
@@ -283,7 +285,7 @@ const buildValidationHtml = (errors) => {
     return errors.map(error => `<div class="text-left">• ${error}</div>`).join('');
 };
 
-const saveChanges = () => {
+const saveChanges = async () => {
     const { valid, errors, normalizedConfig } = validateConfig(localConfig.value);
 
     if (!valid) {
@@ -295,18 +297,32 @@ const saveChanges = () => {
         return;
     }
 
-    localConfig.value = normalizedConfig;
-    saveConfig(normalizedConfig);
+    isSaving.value = true;
+    try {
+        await saveConfig(normalizedConfig);
+        
+        localConfig.value = normalizedConfig;
+        
+        Swal.fire({
+            icon: 'success',
+            title: 'Guardado y Sincronizado',
+            text: 'La configuración se actualizó globalmente en todos los escáneres',
+            timer: 2000,
+            showConfirmButton: false
+        });
 
-    Swal.fire({
-        icon: 'success',
-        title: 'Guardado',
-        text: 'Configuración actualizada exitosamente',
-        timer: 1500,
-        showConfirmButton: false
-    });
-
-    emit('close');
+        emit('close');
+    } catch (error) {
+        Swal.fire({
+            icon: 'warning',
+            title: 'Error de Red / KV',
+            text: 'Se guardó localmente, pero no se pudo sincronizar de forma global. ¿Configuraste Vercel KV?',
+        });
+        // We still fall back to local if the KV wasn't set up yet
+        localConfig.value = normalizedConfig;
+    } finally {
+        isSaving.value = false;
+    }
 };
 
 const exportConfig = () => {

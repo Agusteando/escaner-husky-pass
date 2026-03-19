@@ -1,7 +1,6 @@
 import { reactive } from 'vue';
 
 const STATE_KEY = 'husky_pass_settings';
-// FIX: Use {fullnameA} (student name) to match script_2.js which sends the student name in messages
 const DEFAULT_TEMPLATE = '**{fullnameA}** {grado} {grupo} {puertaEmoji}🚪{puertaText}';
 export const DEFAULT_TELEGRAM_THRESHOLD = '15:30';
 
@@ -141,11 +140,28 @@ export const validateConfig = (config = {}) => {
 };
 
 export const loadConfig = async () => {
-    const saved = localStorage.getItem(STATE_KEY);
+    // 1. Try to load from our new Central Vercel KV API
+    try {
+        const response = await fetch('/api/config', { cache: 'no-store' });
+        if (response.ok) {
+            const data = await response.json();
+            if (data && Object.keys(data).length > 0) {
+                const normalized = normalizeConfig(data);
+                Object.assign(appConfig, normalized);
+                localStorage.setItem(STATE_KEY, JSON.stringify(normalized)); // Backup locally
+                return appConfig;
+            }
+        }
+    } catch (e) {
+        console.warn('API sync failed or unavailable. Falling back to local storage...', e);
+    }
 
+    // 2. Fallback to LocalStorage if API fails or device is offline
+    const saved = localStorage.getItem(STATE_KEY);
     if (saved) {
         try {
-            saveConfig(JSON.parse(saved));
+            const parsed = JSON.parse(saved);
+            Object.assign(appConfig, normalizeConfig(parsed));
             return appConfig;
         } catch (e) {
             console.error('Failed to parse saved config', e);
@@ -153,26 +169,58 @@ export const loadConfig = async () => {
         }
     }
 
+    // 3. Absolute Fallback: Original Public Config (First Load)
     try {
         const response = await fetch('/config.json', { cache: 'no-store' });
         if (response.ok) {
             const data = await response.json();
-            saveConfig(data);
+            const normalized = normalizeConfig(data);
+            Object.assign(appConfig, normalized);
+            localStorage.setItem(STATE_KEY, JSON.stringify(normalized));
             return appConfig;
         }
     } catch (e) {
         console.error('Failed to load default config', e);
     }
 
-    saveConfig(createDefaultConfig());
     return appConfig;
 };
 
-export const saveConfig = (config = appConfig) => {
+export const saveConfig = async (config = appConfig) => {
     const normalizedConfig = normalizeConfig(config);
+
+    try {
+        const response = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(normalizedConfig)
+        });
+        if (!response.ok) throw new Error('Failed to save configuration globally via API.');
+    } catch (e) {
+        console.error(e.message);
+        throw e; // Throw to handle UI feedback in SettingsView
+    }
+
+    // Update locally instantly after API success
     Object.assign(appConfig, normalizedConfig);
     localStorage.setItem(STATE_KEY, JSON.stringify(normalizedConfig));
     return normalizedConfig;
+};
+
+export const startConfigSync = () => {
+    // Fetch configuration immediately when tab gains focus
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && navigator.onLine) {
+            loadConfig();
+        }
+    });
+
+    // Poll the configuration every 30 seconds passively
+    setInterval(() => {
+        if (navigator.onLine) {
+            loadConfig();
+        }
+    }, 30000);
 };
 
 export const getMatchedRules = (plantel, nivel, grado) => {
