@@ -166,7 +166,7 @@
       <div class="p-4 border-t bg-gray-50 flex gap-3">
         <button @click="saveChanges" :disabled="isSaving" class="flex-1 bg-husky-blue text-white py-3 rounded-lg font-display text-lg shadow hover:bg-blue-600 transition disabled:opacity-75 disabled:cursor-not-allowed flex items-center justify-center">
           <i v-if="isSaving" class="fas fa-spinner fa-spin mr-2"></i>
-          {{ isSaving ? 'Guardando...' : 'Guardar Cambios' }}
+          {{ isSaving ? 'Guardando y Sincronizando...' : 'Guardar Cambios' }}
         </button>
       </div>
     </div>
@@ -300,7 +300,6 @@ const saveChanges = async () => {
     isSaving.value = true;
     try {
         await saveConfig(normalizedConfig);
-        
         localConfig.value = normalizedConfig;
         
         Swal.fire({
@@ -313,12 +312,12 @@ const saveChanges = async () => {
 
         emit('close');
     } catch (error) {
+        // Safe Fallback - The JSON still saves to Local Storage
         Swal.fire({
             icon: 'warning',
-            title: 'Error de Red / KV',
-            text: 'Se guardó localmente, pero no se pudo sincronizar de forma global. ¿Configuraste Vercel KV?',
+            title: 'Configuración Parcial',
+            text: 'Se guardó en este dispositivo, pero falló la sincronización global. ¿Están configuradas las variables de Redis en Vercel?',
         });
-        // We still fall back to local if the KV wasn't set up yet
         localConfig.value = normalizedConfig;
     } finally {
         isSaving.value = false;

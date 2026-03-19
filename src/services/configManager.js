@@ -88,6 +88,7 @@ export const normalizeConfig = (config = {}) => {
     };
 };
 
+// Global Reactive Configuration Object
 export const appConfig = reactive(normalizeConfig(createDefaultConfig()));
 
 const validateSingleTelegramDelivery = (telegramDelivery, label) => {
@@ -140,23 +141,24 @@ export const validateConfig = (config = {}) => {
 };
 
 export const loadConfig = async () => {
-    // 1. Try to load from our new Central Vercel KV API
+    // 1. Try to fetch the global synchronized config from Redis
     try {
         const response = await fetch('/api/config', { cache: 'no-store' });
         if (response.ok) {
             const data = await response.json();
             if (data && Object.keys(data).length > 0) {
                 const normalized = normalizeConfig(data);
+                // Reactivity updates the UI automatically
                 Object.assign(appConfig, normalized);
                 localStorage.setItem(STATE_KEY, JSON.stringify(normalized)); // Backup locally
                 return appConfig;
             }
         }
     } catch (e) {
-        console.warn('API sync failed or unavailable. Falling back to local storage...', e);
+        console.warn('API sync failed. Falling back to local offline storage...', e);
     }
 
-    // 2. Fallback to LocalStorage if API fails or device is offline
+    // 2. Fallback to LocalStorage if offline or Vercel Edge fails
     const saved = localStorage.getItem(STATE_KEY);
     if (saved) {
         try {
@@ -164,12 +166,11 @@ export const loadConfig = async () => {
             Object.assign(appConfig, normalizeConfig(parsed));
             return appConfig;
         } catch (e) {
-            console.error('Failed to parse saved config', e);
             localStorage.removeItem(STATE_KEY);
         }
     }
 
-    // 3. Absolute Fallback: Original Public Config (First Load)
+    // 3. Absolute default from static JSON config file
     try {
         const response = await fetch('/config.json', { cache: 'no-store' });
         if (response.ok) {
@@ -189,38 +190,40 @@ export const loadConfig = async () => {
 export const saveConfig = async (config = appConfig) => {
     const normalizedConfig = normalizeConfig(config);
 
+    // Save globally first
     try {
         const response = await fetch('/api/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(normalizedConfig)
         });
-        if (!response.ok) throw new Error('Failed to save configuration globally via API.');
+        if (!response.ok) throw new Error('No se pudo guardar la configuración en la base de datos (Redis).');
     } catch (e) {
         console.error(e.message);
-        throw e; // Throw to handle UI feedback in SettingsView
+        throw e; // Pass to the component to show a warning
     }
 
-    // Update locally instantly after API success
+    // Apply locally
     Object.assign(appConfig, normalizedConfig);
     localStorage.setItem(STATE_KEY, JSON.stringify(normalizedConfig));
     return normalizedConfig;
 };
 
 export const startConfigSync = () => {
-    // Fetch configuration immediately when tab gains focus
+    // 1. Immediate fetch when the device is unlocked or tab is focused
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible' && navigator.onLine) {
             loadConfig();
         }
     });
 
-    // Poll the configuration every 30 seconds passively
+    // 2. Passive Polling: every 2 minutes (120,000 ms). 
+    // This is low enough to prevent budget limits from maxing out, but fast enough for automated syncing.
     setInterval(() => {
         if (navigator.onLine) {
             loadConfig();
         }
-    }, 30000);
+    }, 120000); 
 };
 
 export const getMatchedRules = (plantel, nivel, grado) => {

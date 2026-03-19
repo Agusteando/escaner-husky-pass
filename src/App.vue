@@ -55,8 +55,9 @@ onMounted(async () => {
     window.addEventListener('offline', updateOnlineStatus);
     window.addEventListener('data-usage-updated', handleDataUsage);
     
+    // Load config on mount and initialize background synchronizer
     await loadConfig();
-    startConfigSync(); // Start global background syncing across all clients
+    startConfigSync();
 });
 
 onUnmounted(() => {
