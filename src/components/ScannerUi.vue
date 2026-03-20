@@ -369,9 +369,10 @@ const _sendAjaxRequest = async (id) => {
 
         await _handleStudentDataDisplay(data);
 
+        // Submitting to the new isolated backend with cleaned up payload.
         void fallbackInsertScan({
-            data: [{ ss_id: id, type: scanType.value, puerta: selectedDoor.value }],
-            table: 'acceso'
+            id: id,
+            type: scanType.value
         }).catch(console.error);
 
     } catch (err) {

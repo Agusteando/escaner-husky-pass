@@ -29,11 +29,17 @@ export const fetchStudentDetails = async (id) => {
 
 export const fallbackInsertScan = async (payload) => {
     try {
-        const response = await fetch('https://admin.casitaiedis.edu.mx/api/insert-pa-scan', {
+        // Support both the cleaned up caller payload { id, type }
+        // and safely fallback if the old structure is ever passed.
+        const id = payload.id !== undefined ? payload.id : payload.data?.[0]?.ss_id;
+        const type = payload.type !== undefined ? payload.type : payload.data?.[0]?.type;
+
+        const response = await fetch('https://worker.casitaapps.com:6075/register-scan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({ id, type }),
         });
+        
         if (response.ok) return await response.json();
         return { id: 1 };
     } catch (e) {
