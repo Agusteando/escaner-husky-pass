@@ -21,14 +21,6 @@ export default async function handler(request, response) {
             connectTimeout: 5000,
         });
 
-        // Asegurarse de que la tabla exista (útil para la primera ejecución sin configuración previa)
-        await connection.execute(`
-            CREATE TABLE IF NOT EXISTS husky_pass_config (
-                id INT PRIMARY KEY,
-                config_data LONGTEXT NOT NULL
-            )
-        `);
-
         if (request.method === 'GET') {
             const [rows] = await connection.execute('SELECT config_data FROM husky_pass_config WHERE id = 1');
             
