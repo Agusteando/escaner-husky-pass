@@ -87,7 +87,7 @@ export const normalizeConfig = (config = {}) => {
     };
 };
 
-// Global Reactive Configuration Object
+// Objeto Global Reactivo
 export const appConfig = reactive(normalizeConfig(createDefaultConfig()));
 
 const validateSingleTelegramDelivery = (telegramDelivery, label) => {
@@ -140,9 +140,9 @@ export const validateConfig = (config = {}) => {
 };
 
 export const loadConfig = async () => {
-    let loadedFromRedis = false;
+    let loadedFromDatabase = false;
 
-    // 1. Always attempt to load the global synchronized config from Redis
+    // 1. Siempre intentar cargar la configuración global desde MySQL
     try {
         const response = await fetch('/api/config', { cache: 'no-store' });
         if (response.ok) {
@@ -150,16 +150,16 @@ export const loadConfig = async () => {
             if (data && Object.keys(data).length > 0 && data.rules && data.rules.length > 0) {
                 const normalized = normalizeConfig(data);
                 Object.assign(appConfig, normalized);
-                loadedFromRedis = true;
+                loadedFromDatabase = true;
                 return appConfig;
             }
         }
     } catch (e) {
-        console.warn('API sync failed. Retrying fallback to public/config.json', e);
+        console.warn('Fallo en la sincronización con la base de datos. Intentando usar el archivo local de respaldo.', e);
     }
 
-    // 2. Safely Fallback to static JSON file if Redis is missing, errors out, or is empty
-    if (!loadedFromRedis) {
+    // 2. Respaldo al archivo JSON local si la base de datos está vacía o falla
+    if (!loadedFromDatabase) {
         try {
             const response = await fetch('/config.json', { cache: 'no-store' });
             if (response.ok) {
@@ -167,7 +167,7 @@ export const loadConfig = async () => {
                 const normalized = normalizeConfig(data);
                 Object.assign(appConfig, normalized);
                 
-                // Fire and forget upload to seed the database if it was just empty
+                // Sembrar la base de datos asíncronamente
                 fetch('/api/config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -177,7 +177,7 @@ export const loadConfig = async () => {
                 return appConfig;
             }
         } catch (e) {
-            console.error('Failed to load fallback config.json', e);
+            console.error('No se pudo cargar la configuración de respaldo config.json', e);
         }
     }
 
@@ -187,7 +187,7 @@ export const loadConfig = async () => {
 export const saveConfig = async (config = appConfig) => {
     const normalizedConfig = normalizeConfig(config);
 
-    // Strict Global Save. If Redis is down, we deny the save and warn the user.
+    // Guardado Estricto: Si MySQL no responde adecuadamente, rechazamos el guardado local.
     const response = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -196,28 +196,23 @@ export const saveConfig = async (config = appConfig) => {
     
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'No se pudo guardar la configuración global en Redis.');
+        throw new Error(errorData.error || 'No se pudo guardar la configuración global en la base de datos.');
     }
 
-    // Update memory instantly upon success
+    // Actualiza la memoria instantáneamente si el éxito está garantizado
     Object.assign(appConfig, normalizedConfig);
     return normalizedConfig;
 };
 
 export const startConfigSync = () => {
-    // 1. Immediate fetch when the device is unlocked or tab is focused
+    // Escucha eventos de visibilidad para asegurar que la app tenga la versión más fresca
+    // Esto asegura 0 costos continuos en Vercel sin recurrir a "Heavy Polling".
+    // Solo hace un request al volver a visualizar o usar el dispositivo de forma activa.
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible' && navigator.onLine) {
             loadConfig();
         }
     });
-
-    // 2. Passive Polling: every 2 minutes (120,000 ms). 
-    setInterval(() => {
-        if (navigator.onLine) {
-            loadConfig();
-        }
-    }, 120000); 
 };
 
 export const getMatchedRules = (plantel, nivel, grado) => {

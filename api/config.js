@@ -1,49 +1,67 @@
-import Redis from 'ioredis';
+import mysql from 'mysql2/promise';
 
 export default async function handler(request, response) {
-    const redisUrl = process.env.REDIS_URL;
+    const { MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE, MYSQL_PORT } = process.env;
 
-    if (!redisUrl) {
+    if (!MYSQL_HOST || !MYSQL_USER || !MYSQL_PASSWORD || !MYSQL_DATABASE) {
         return response.status(503).json({ 
-            error: 'La variable de entorno REDIS_URL no está configurada en Vercel.' 
+            error: 'Las credenciales de acceso a la base de datos MySQL no están configuradas.' 
         });
     }
 
-    let redis;
+    let connection;
     try {
-        // Initialize Redis with a short timeout so it fails fast if something goes wrong
-        redis = new Redis(redisUrl, {
-            maxRetriesPerRequest: 1,
-            connectTimeout: 3000,
+        // Inicializar la conexión a MySQL
+        connection = await mysql.createConnection({
+            host: MYSQL_HOST,
+            user: MYSQL_USER,
+            password: MYSQL_PASSWORD,
+            database: MYSQL_DATABASE,
+            port: MYSQL_PORT ? parseInt(MYSQL_PORT, 10) : 3306,
+            connectTimeout: 5000,
         });
 
+        // Asegurarse de que la tabla exista (útil para la primera ejecución sin configuración previa)
+        await connection.execute(`
+            CREATE TABLE IF NOT EXISTS husky_pass_config (
+                id INT PRIMARY KEY,
+                config_data LONGTEXT NOT NULL
+            )
+        `);
+
         if (request.method === 'GET') {
-            const data = await redis.get('husky_pass_settings');
+            const [rows] = await connection.execute('SELECT config_data FROM husky_pass_config WHERE id = 1');
             
             let configData = null;
-            if (data) {
-                try { configData = JSON.parse(data); } catch(e) {}
+            if (rows.length > 0) {
+                try { configData = JSON.parse(rows[0].config_data); } catch(e) {}
             }
 
-            // Budget protector: Cache in Vercel Edge for 15 seconds.
+            // Uso eficiente de recursos en Vercel Edge: Cache durante 15 segundos
             response.setHeader('Cache-Control', 's-maxage=15, stale-while-revalidate=30');
-            return response.status(200).json(configData);
+            return response.status(200).json(configData || {});
             
         } else if (request.method === 'POST') {
             const stringifiedConfig = JSON.stringify(request.body);
-            await redis.set('husky_pass_settings', stringifiedConfig);
+            
+            // Actualiza o inserta la configuración de manera atómica
+            await connection.execute(
+                'INSERT INTO husky_pass_config (id, config_data) VALUES (1, ?) ON DUPLICATE KEY UPDATE config_data = ?',
+                [stringifiedConfig, stringifiedConfig]
+            );
+            
             return response.status(200).json({ success: true });
         } else {
             response.setHeader('Allow', ['GET', 'POST']);
-            return response.status(405).end(`Method ${request.method} Not Allowed`);
+            return response.status(405).end(`Método ${request.method} no permitido`);
         }
     } catch (error) {
-        console.error('Redis API Error:', error);
-        return response.status(500).json({ error: 'No se pudo conectar a la base de datos Redis.' });
+        console.error('Error en la API de MySQL:', error);
+        return response.status(500).json({ error: 'No se pudo establecer conexión con la base de datos.' });
     } finally {
-        if (redis) {
-            // Always cleanly quit in serverless environments to prevent hanging functions
-            redis.quit();
+        if (connection) {
+            // Cerrar limpiamente la conexión en entornos serverless
+            await connection.end();
         }
     }
 }

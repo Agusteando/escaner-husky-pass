@@ -62,7 +62,7 @@
               </div>
 
               <div class="mb-3">
-                <label class="block text-xs font-bold text-gray-500 mb-1">Chat ID (WhatsApp / Telegram)</label>
+                <label class="block text-xs font-bold text-gray-500 mb-1">ID del Chat (WhatsApp / Telegram)</label>
                 <input v-model="rule.chatId" placeholder="-100... o 1234@g.us" class="w-full border p-2 rounded bg-white outline-none focus:border-husky-blue text-sm font-mono" />
               </div>
 
@@ -78,9 +78,9 @@
 
               <div class="rounded-xl border bg-white p-4">
                 <div class="mb-3">
-                  <h4 class="font-display text-sm text-husky-gray">Envío Telegram para esta regla</h4>
+                  <h4 class="font-display text-sm text-husky-gray">Envío mediante Telegram para esta regla</h4>
                   <p class="text-xs text-gray-500 mt-1">
-                    Este ajuste se aplica únicamente si el Chat ID corresponde a Telegram. En WhatsApp, el envío sigue siendo inmediato.
+                    Este ajuste se aplica únicamente si el ID del Chat corresponde a Telegram. En WhatsApp, el envío sigue siendo inmediato.
                   </p>
                 </div>
 
@@ -105,7 +105,7 @@
                       ></i>
                     </div>
                     <p class="text-xs text-gray-500 mt-2">
-                      Mantiene el comportamiento actual para este grupo.
+                      Mantiene el comportamiento estándar para este grupo.
                     </p>
                   </button>
 
@@ -129,7 +129,7 @@
                       ></i>
                     </div>
                     <p class="text-xs text-gray-500 mt-2">
-                      Solo envía Telegram cuando el escaneo ocurre a partir de la hora indicada.
+                      El envío por Telegram solo ocurre si el escaneo se realiza a partir de la hora indicada.
                     </p>
                   </button>
                 </div>
@@ -148,9 +148,9 @@
 
                   <div class="text-xs text-gray-500 leading-relaxed">
                     <p>Formato de 24 horas. Ejemplo: <strong>15:30</strong>.</p>
-                    <p class="mt-1">La comparación usa la hora local del dispositivo, igual que el resto de la app.</p>
+                    <p class="mt-1">La evaluación utiliza la hora local del dispositivo en uso.</p>
                     <p class="mt-1">Zona horaria detectada: <strong>{{ deviceTimeZoneLabel }}</strong>.</p>
-                    <p class="mt-1">Si el evento ocurre antes del umbral, Telegram no se envía para esta regla.</p>
+                    <p class="mt-1">Los eventos previos a la hora definida no emitirán notificaciones vía Telegram.</p>
                   </div>
                 </div>
 
@@ -236,7 +236,7 @@ const getRuleTelegramThresholdError = (rule) => {
 
     return isValidTimeThreshold(rule.telegramDelivery.timeBased.threshold)
         ? ''
-        : 'Ingresa una hora válida en formato HH:MM de 24 horas.';
+        : 'Por favor, introduce una hora válida en formato de 24 horas (HH:MM).';
 };
 
 const insertVar = (variable, ruleIndex) => {
@@ -291,7 +291,7 @@ const saveChanges = async () => {
     if (!valid) {
         Swal.fire({
             icon: 'error',
-            title: 'Revisa la configuración',
+            title: 'Revisión de configuración',
             html: buildValidationHtml(errors)
         });
         return;
@@ -304,19 +304,18 @@ const saveChanges = async () => {
         
         Swal.fire({
             icon: 'success',
-            title: 'Sincronizado',
-            text: 'Configuración guardada y replicada a todos los clientes.',
-            timer: 2000,
+            title: 'Sincronización Exitosa',
+            text: 'La configuración ha sido guardada en la base de datos de manera centralizada.',
+            timer: 2500,
             showConfirmButton: false
         });
 
         emit('close');
     } catch (error) {
-        // Strict Error: Deny the save entirely if global sync fails.
         Swal.fire({
             icon: 'error',
             title: 'Error de Sincronización',
-            text: error.message || 'No se pudo guardar globalmente.',
+            text: error.message || 'Ocurrió un problema al intentar guardar la configuración en el servidor principal.',
         });
     } finally {
         isSaving.value = false;
@@ -338,7 +337,7 @@ const importConfig = (event) => {
 
     const reader = new FileReader();
 
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
         try {
             const parsed = JSON.parse(e.target.result);
             const { valid, errors, normalizedConfig } = validateConfig(parsed);
@@ -348,19 +347,24 @@ const importConfig = (event) => {
             }
 
             localConfig.value = normalizedConfig;
+            
+            // Auto-guardado instantáneo a la base de datos central en cuanto se importa el archivo
+            isSaving.value = true;
+            await saveConfig(normalizedConfig);
 
             Swal.fire(
-                'Éxito',
-                'Configuración cargada. Recuerda hacer clic en "Guardar Cambios".',
+                'Importación Exitosa',
+                'El documento de configuración se ha cargado y sincronizado automáticamente en la base de datos principal.',
                 'success'
             );
         } catch (err) {
             Swal.fire(
-                'Error',
-                err.message || 'El archivo JSON no es válido',
+                'Fallo en la Importación',
+                err.message || 'El documento JSON proporcionado no posee un formato admitido o no se pudo registrar.',
                 'error'
             );
         } finally {
+            isSaving.value = false;
             event.target.value = '';
         }
     };
