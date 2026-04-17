@@ -147,7 +147,10 @@ export const loadConfig = async () => {
         const response = await fetch('/api/config', { cache: 'no-store' });
         if (response.ok) {
             const data = await response.json();
-            if (data && Object.keys(data).length > 0 && data.rules && data.rules.length > 0) {
+            
+            // Si los datos son válidos, los aplicamos. 
+            // Incluso si no hay reglas, es una configuración válida (el admin pudo borrarlas).
+            if (data && typeof data === 'object' && Object.keys(data).length > 0) {
                 const normalized = normalizeConfig(data);
                 Object.assign(appConfig, normalized);
                 loadedFromDatabase = true;
@@ -158,7 +161,7 @@ export const loadConfig = async () => {
         console.warn('Fallo en la sincronización con la base de datos. Intentando usar el archivo local de respaldo.', e);
     }
 
-    // 2. Respaldo al archivo JSON local si la base de datos está vacía o falla
+    // 2. Respaldo al archivo JSON local temporal solo en memoria.
     if (!loadedFromDatabase) {
         try {
             const response = await fetch('/config.json', { cache: 'no-store' });
@@ -167,12 +170,9 @@ export const loadConfig = async () => {
                 const normalized = normalizeConfig(data);
                 Object.assign(appConfig, normalized);
                 
-                // Sembrar la base de datos asíncronamente
-                fetch('/api/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(normalized)
-                }).catch(() => {});
+                // NOTA CRÍTICA: Se eliminó el guardado automático mediante POST.
+                // Si la red del cliente falla, cargará el JSON solo para sí mismo, 
+                // evitando sobrescribir la configuración central de todos los demás usuarios.
                 
                 return appConfig;
             }
