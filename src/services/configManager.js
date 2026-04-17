@@ -140,74 +140,49 @@ export const validateConfig = (config = {}) => {
 };
 
 export const loadConfig = async () => {
-    let loadedFromDatabase = false;
-
-    // 1. Siempre intentar cargar la configuración global desde MySQL
     try {
+        // Única fuente de la verdad: MySQL
         const response = await fetch('/api/config', { cache: 'no-store' });
         if (response.ok) {
             const data = await response.json();
-            
-            // Si los datos son válidos, los aplicamos. 
-            // Incluso si no hay reglas, es una configuración válida (el admin pudo borrarlas).
             if (data && typeof data === 'object' && Object.keys(data).length > 0) {
                 const normalized = normalizeConfig(data);
                 Object.assign(appConfig, normalized);
-                loadedFromDatabase = true;
                 return appConfig;
             }
         }
     } catch (e) {
-        console.warn('Fallo en la sincronización con la base de datos. Intentando usar el archivo local de respaldo.', e);
+        console.error('Error de red al consultar MySQL:', e);
     }
-
-    // 2. Respaldo al archivo JSON local temporal solo en memoria.
-    if (!loadedFromDatabase) {
-        try {
-            const response = await fetch('/config.json', { cache: 'no-store' });
-            if (response.ok) {
-                const data = await response.json();
-                const normalized = normalizeConfig(data);
-                Object.assign(appConfig, normalized);
-                
-                // NOTA CRÍTICA: Se eliminó el guardado automático mediante POST.
-                // Si la red del cliente falla, cargará el JSON solo para sí mismo, 
-                // evitando sobrescribir la configuración central de todos los demás usuarios.
-                
-                return appConfig;
-            }
-        } catch (e) {
-            console.error('No se pudo cargar la configuración de respaldo config.json', e);
-        }
-    }
-
+    
+    // Si falla la red, la aplicación simplemente mantiene en memoria lo que ya tenía cargado.
+    // Adiós dependencias de JSON, adiós retrocompatibilidad.
     return appConfig;
 };
 
 export const saveConfig = async (config = appConfig) => {
     const normalizedConfig = normalizeConfig(config);
 
-    // Guardado Estricto: Si MySQL no responde adecuadamente, rechazamos el guardado local.
     const response = await fetch('/api/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+            'Content-Type': 'application/json',
+            // Solo los clientes con esta actualización enviarán esta cabecera autorizada
+            'x-husky-token': import.meta.env.VITE_SETTINGS_PASSWORD || ''
+        },
         body: JSON.stringify(normalizedConfig)
     });
     
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'No se pudo guardar la configuración global en la base de datos.');
+        throw new Error(errorData.error || 'No se pudo guardar la configuración en la base de datos.');
     }
 
-    // Actualiza la memoria instantáneamente si el éxito está garantizado
     Object.assign(appConfig, normalizedConfig);
     return normalizedConfig;
 };
 
 export const startConfigSync = () => {
-    // Escucha eventos de visibilidad para asegurar que la app tenga la versión más fresca
-    // Esto asegura 0 costos continuos en Vercel sin recurrir a "Heavy Polling".
-    // Solo hace un request al volver a visualizar o usar el dispositivo de forma activa.
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible' && navigator.onLine) {
             loadConfig();

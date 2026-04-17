@@ -1,7 +1,7 @@
 import mysql from 'mysql2/promise';
 
 export default async function handler(request, response) {
-    const { MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE, MYSQL_PORT } = process.env;
+    const { MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE, MYSQL_PORT, VITE_SETTINGS_PASSWORD } = process.env;
 
     if (!MYSQL_HOST || !MYSQL_USER || !MYSQL_PASSWORD || !MYSQL_DATABASE) {
         return response.status(503).json({ 
@@ -11,7 +11,6 @@ export default async function handler(request, response) {
 
     let connection;
     try {
-        // Inicializar la conexión a MySQL
         connection = await mysql.createConnection({
             host: MYSQL_HOST,
             user: MYSQL_USER,
@@ -29,14 +28,23 @@ export default async function handler(request, response) {
                 try { configData = JSON.parse(rows[0].config_data); } catch(e) {}
             }
 
-            // Uso eficiente de recursos en Vercel Edge: Cache durante 15 segundos
             response.setHeader('Cache-Control', 's-maxage=15, stale-while-revalidate=30');
             return response.status(200).json(configData || {});
             
         } else if (request.method === 'POST') {
+            // DEFENSA CONTRA CLIENTES CON CACHÉ VIEJO:
+            // Los teléfonos con el código antiguo intentarán hacer POST sin esta cabecera.
+            // Al no tenerla, el servidor rechazará su petición y la base de datos no se sobreescribirá.
+            const clientToken = request.headers['x-husky-token'];
+            
+            if (!clientToken || clientToken !== VITE_SETTINGS_PASSWORD) {
+                return response.status(403).json({ 
+                    error: 'Acceso denegado. Cliente desactualizado intentando modificar la base de datos.' 
+                });
+            }
+
             const stringifiedConfig = JSON.stringify(request.body);
             
-            // Actualiza o inserta la configuración de manera atómica
             await connection.execute(
                 'INSERT INTO husky_pass_config (id, config_data) VALUES (1, ?) ON DUPLICATE KEY UPDATE config_data = ?',
                 [stringifiedConfig, stringifiedConfig]
@@ -52,7 +60,6 @@ export default async function handler(request, response) {
         return response.status(500).json({ error: 'No se pudo establecer conexión con la base de datos.' });
     } finally {
         if (connection) {
-            // Cerrar limpiamente la conexión en entornos serverless
             await connection.end();
         }
     }
